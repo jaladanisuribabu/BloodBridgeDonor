@@ -7,6 +7,13 @@ import { bloodGroupSchema } from "@/lib/validation";
 export async function GET(request: NextRequest) {
   const hospital = await hospitalForRequest();
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (hospital.latitude === null || hospital.longitude === null) {
+    return NextResponse.json(
+      { error: "Add hospital coordinates before searching for donors." },
+      { status: 409 },
+    );
+  }
+  const { latitude, longitude } = hospital;
 
   const params = request.nextUrl.searchParams;
   const bloodGroup = bloodGroupSchema.safeParse(params.get("bloodGroup"));
@@ -25,8 +32,8 @@ export async function GET(request: NextRequest) {
   const donors = await db.$transaction((tx) =>
     findNearbyDonors(tx, {
       bloodGroup: bloodGroup.data,
-      latitude: hospital.latitude,
-      longitude: hospital.longitude,
+      latitude,
+      longitude,
       limit: 100,
       emergencyRequestId,
     }),

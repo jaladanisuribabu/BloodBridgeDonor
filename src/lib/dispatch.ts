@@ -27,7 +27,12 @@ async function reserveNextBatch(requestId: string): Promise<ReservedCall[]> {
       include: { hospital: { select: { latitude: true, longitude: true } } },
     });
 
-    if (!request || request.state !== RequestState.OPEN) return [];
+    if (
+      !request ||
+      request.state !== RequestState.OPEN ||
+      request.hospital.latitude === null ||
+      request.hospital.longitude === null
+    ) return [];
 
     const activeCount = await tx.callLog.count({
       where: { emergencyRequestId: requestId, status: { in: ACTIVE_CALL_STATUSES } },

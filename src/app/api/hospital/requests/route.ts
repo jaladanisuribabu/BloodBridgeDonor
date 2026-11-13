@@ -38,8 +38,13 @@ export async function GET() {
       createdAt: request.createdAt,
       donors: request.callLogs.map((call) => {
         const location =
-          call.status === "ACCEPTED" ? call.locationTracking[0] : undefined;
-        const distanceKm = location
+          call.status === "ACCEPTED" &&
+          hospital.latitude !== null &&
+          hospital.longitude !== null
+            ? call.locationTracking[0]
+            : undefined;
+        const distanceKm =
+          location && hospital.latitude !== null && hospital.longitude !== null
           ? distanceInKm(
               location.latitude,
               location.longitude,
@@ -70,6 +75,12 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const hospital = await hospitalForRequest();
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (hospital.latitude === null || hospital.longitude === null || !hospital.address) {
+    return NextResponse.json(
+      { error: "Add the hospital address and map coordinates before requesting donors." },
+      { status: 409 },
+    );
+  }
 
   const parsed = emergencyRequestSchema.safeParse(
     await request.json().catch(() => null),

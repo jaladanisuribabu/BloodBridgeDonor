@@ -58,11 +58,11 @@ model Donor {
 model Hospital {
   id             String            @id @default(cuid())
   name           String
-  address        String
+  address        String?
   email          String            @unique
   passwordHash   String
-  latitude       Float
-  longitude      Float
+  latitude       Float?
+  longitude      Float?
   createdAt      DateTime          @default(now())
   requests       EmergencyRequest[]
   inventory      BloodInventory[]

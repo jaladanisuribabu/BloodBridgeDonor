@@ -73,6 +73,7 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 
 | Method | Route | Purpose |
 |---|---|---|
+| POST | `/api/hospital/register` | Create a hospital account and sign in |
 | POST | `/api/hospital/login` | Create hospital session |
 | GET | `/api/hospital/google/start` | Start Google OpenID Connect sign-in |
 | GET | `/api/hospital/google/callback` | Verify Google identity and create hospital session |
@@ -81,6 +82,7 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | POST | `/api/hospital/password-reset/confirm` | Set a new password with a valid reset token |
 | POST | `/api/hospital/logout` | Clear session |
 | GET | `/api/hospital/me` | Current hospital account and matching coordinates |
+| PUT | `/api/hospital/profile` | Save hospital address and coordinates for matching |
 | GET / POST | `/api/hospital/requests` | List requests / create emergency and start calls |
 | GET | `/api/hospital/donors?bloodGroup=A_POSITIVE` | Preview available matches within 5 km |
 | POST | `/api/hospital/requests/:id/complete` | Close out accepted donor call records |
@@ -104,9 +106,15 @@ Configure `RESEND_API_KEY` and `PASSWORD_RESET_FROM` in the deployment environme
 
 Forgotten account emails are not disclosed by the sign-in page. The hospital user must contact their hospital administrator or IT team through an official channel to verify identity and recover or update the registered email.
 
+## Hospital registration
+
+To create a hospital login, open `/hospital`, choose **Register**, enter the hospital name and email, set a password of at least 12 characters, confirm it, and select **Create hospital account**. The account is signed in immediately. Before donor matching is available, complete the dashboard setup with the hospital address and latitude/longitude. For future visits, use **Sign in** with the same email and password.
+
+Registration does not verify that the email belongs to a hospital. Protect the registration endpoint with appropriate operational controls before public production use. Google sign-in is only available after an account exists with the same verified email, and Google OAuth testing-mode accounts must also be listed as test users.
+
 ## Google hospital sign-in
 
-Create a Google OAuth client for a web application and add the exact authorized redirect URI `https://YOUR_PRODUCTION_DOMAIN/api/hospital/google/callback` (locally: `http://localhost:3000/api/hospital/google/callback`). Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as server-side deployment secrets and redeploy. Google sign-in does not create hospital accounts: the Google account must have a verified email matching an existing hospital login email. The OAuth flow uses state, nonce, and PKCE; credentials are never sent to the browser.
+Create a Google OAuth client for a web application and add the exact authorized redirect URI `https://YOUR_PRODUCTION_DOMAIN/api/hospital/google/callback`. For local development, separately authorize `http://localhost:3000` as a JavaScript origin and `http://localhost:3000/api/hospital/google/callback` as a redirect URI, then set `APP_URL=http://localhost:3000`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` in the ignored `.env.local` file. Production credentials do not automatically exist in a local environment. Set the Google credentials as server-side deployment secrets and redeploy. Google sign-in does not create hospital accounts: the Google account must have a verified email matching an existing hospital login email. The OAuth flow uses state, nonce, and PKCE; credentials are never sent to the browser.
 
 ## GitHub and deployment
 

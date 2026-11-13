@@ -27,6 +27,9 @@ h1, h2, strong { font-family: "Manrope", sans-serif; }
 .password-input { position: relative; display: flex; }
 .password-input input { width: 100%; padding-right: 58px; }
 .password-toggle { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); border: 0; padding: 4px; background: transparent; color: var(--red-dark); font-size: 12px; font-weight: 700; }
+.auth-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 0 0 20px; border-radius: 9px; background: #f3f5f6; }
+.auth-switch button { min-height: 36px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; }
+.auth-switch button[aria-selected="true"] { background: white; color: var(--red-dark); box-shadow: 0 1px 4px #17222914; }
 .login-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; }
 .login-divider::before, .login-divider::after { height: 1px; flex: 1; background: var(--line); content: ""; }
 .google-sign-in { width: 100%; display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 10px; border: 1px solid #dfe5e7; border-radius: 8px; background: white; color: #29343a; font-size: 13px; font-weight: 700; text-decoration: none; }
@@ -77,6 +80,8 @@ input:focus, select:focus { border-color: #db7b84; box-shadow: 0 0 0 3px #c83a47
 .icon-bubble { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--red-soft); color: var(--red); font-size: 20px; }
 .request-form { grid-template-columns: 1.2fr .65fr auto; align-items: end; gap: 12px; }
 .request-form .button { min-height: 40px; }
+.location-form { max-width: 650px; }
+.location-coordinate-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .helper-text { font-size: 11px; margin: 14px 0 0; }
 .stat-panel { display: grid; align-content: center; grid-template-columns: 1fr auto; column-gap: 14px; }
 .stat-panel .eyebrow, .stat-panel .muted { grid-column: 1 / -1; margin: 0; }
@@ -149,6 +154,7 @@ footer { max-width: 1200px; margin: 0 auto; padding: 0 28px 24px; color: #99a2a5
   .panel { padding: 17px; }
   .section-heading { align-items: flex-start; }
   .request-form { grid-template-columns: 1fr; }
+  .location-coordinate-fields { grid-template-columns: 1fr; }
   .request-form .button { grid-column: auto; }
   .request-card { grid-template-columns: 68px 1fr; }
   .request-card .status-pill { grid-column: 2; justify-self: start; }

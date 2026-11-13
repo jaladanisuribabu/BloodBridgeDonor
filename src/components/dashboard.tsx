@@ -18,8 +18,9 @@ type Hospital = {
   id: string;
   name: string;
   email: string;
-  latitude: number;
-  longitude: number;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 type Donor = {
   id: string;
@@ -52,16 +53,40 @@ type Forecast = {
   confidence: "low" | "moderate";
 };
 
+async function responseError(response: Response, fallback: string): Promise<string> {
+  const data = (await response.json().catch(() => null)) as
+    | { error?: unknown }
+    | null;
+  if (typeof data?.error === "string") return data.error;
+  return response.status >= 500
+    ? `${fallback} The server could not complete the request. Please try again later.`
+    : fallback;
+}
+
+function requestError(error: unknown, fallback: string): string {
+  if (error instanceof TypeError && /fetch/i.test(error.message)) {
+    return "Could not connect to BloodBridge. Check your internet connection or make sure the local server is running.";
+  }
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function Dashboard() {
   const [hospital, setHospital] = useState<Hospital | null>(null);
   const [requests, setRequests] = useState<EmergencyRequest[]>([]);
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [registrationMode, setRegistrationMode] = useState(false);
+  const [hospitalName, setHospitalName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [hospitalAddress, setHospitalAddress] = useState("");
+  const [hospitalLatitude, setHospitalLatitude] = useState("");
+  const [hospitalLongitude, setHospitalLongitude] = useState("");
   const [googleStatus, setGoogleStatus] = useState<
     "checking" | "ready" | "not_configured" | "unavailable"
   >("checking");
+  const [isLocalApp, setIsLocalApp] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState<"password" | "email" | null>(
     null,
   );
@@ -117,6 +142,10 @@ export default function Dashboard() {
   }, [refresh]);
 
   useEffect(() => {
+    setIsLocalApp(
+      window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1",
+    );
     const error = new URLSearchParams(window.location.search).get("google_error");
     const messages: Record<string, string> = {
       not_configured: "Google sign-in is not configured yet. Use your hospital email and password.",
@@ -164,16 +193,79 @@ export default function Dashboard() {
         body: JSON.stringify({ email, password }),
       });
       if (!response.ok) {
-        const data = (await response.json()) as { error?: string };
-        throw new Error(data.error ?? "Sign-in failed.");
+        throw new Error(await responseError(response, "Sign-in failed."));
       }
       const session = await fetch("/api/hospital/me", { cache: "no-store" });
+      if (!session.ok) {
+        throw new Error(await responseError(session, "Could not start your hospital session."));
+      }
       const data = (await session.json()) as { hospital: Hospital };
       setHospital(data.hospital);
       setPassword("");
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Sign-in failed.");
+      setMessage(requestError(error, "Sign-in failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function register(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (password !== confirmPassword) {
+      setMessage("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/hospital/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, hospitalName, password, confirmPassword }),
+      });
+      if (!response.ok) {
+        throw new Error(await responseError(response, "Registration failed."));
+      }
+      const session = await fetch("/api/hospital/me", { cache: "no-store" });
+      if (!session.ok) {
+        throw new Error("Account was created, but sign-in could not be completed.");
+      }
+      const sessionData = (await session.json()) as { hospital: Hospital };
+      setHospital(sessionData.hospital);
+      setPassword("");
+      setConfirmPassword("");
+      await refresh();
+    } catch (error) {
+      setMessage(requestError(error, "Registration failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveHospitalLocation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/hospital/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: hospitalAddress,
+          latitude: Number(hospitalLatitude),
+          longitude: Number(hospitalLongitude),
+        }),
+      });
+      const data = (await response.json()) as { hospital?: Hospital; error?: string };
+      if (!response.ok || !data.hospital) {
+        throw new Error(data.error ?? "Could not save hospital location.");
+      }
+      setHospital(data.hospital);
+      setMessage("Hospital location saved. Donor matching is ready.");
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save hospital location.");
     } finally {
       setBusy(false);
     }
@@ -263,7 +355,6 @@ export default function Dashboard() {
       ),
     [requests],
   );
-
   if (!hospital) {
     return (
       <main className="login-shell">
@@ -272,12 +363,44 @@ export default function Dashboard() {
           <p className="eyebrow">HOSPITAL OPERATIONS</p>
           <h1>BloodBridge</h1>
           <p className="muted">Securely coordinate urgent blood donor responses.</p>
-          <form onSubmit={signIn} className="stack-form">
+          <div className="auth-switch" role="tablist" aria-label="Hospital account">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!registrationMode}
+              onClick={() => { setRegistrationMode(false); setMessage(""); }}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={registrationMode}
+              onClick={() => { setRegistrationMode(true); setMessage(""); }}
+            >
+              Register
+            </button>
+          </div>
+          <form onSubmit={registrationMode ? register : signIn} className="stack-form">
+            {registrationMode && (
+              <label>
+                Hospital name
+                <input
+                  type="text"
+                  autoComplete="organization"
+                  minLength={2}
+                  maxLength={160}
+                  required
+                  value={hospitalName}
+                  onChange={(event) => setHospitalName(event.target.value)}
+                />
+              </label>
+            )}
             <label>
               Hospital email
               <input
                 type="email"
-                autoComplete="username"
+                autoComplete={registrationMode ? "email" : "username"}
                 required
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -288,7 +411,8 @@ export default function Dashboard() {
               <span className="password-input">
                 <input
                   type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
+                  autoComplete={registrationMode ? "new-password" : "current-password"}
+                  minLength={registrationMode ? 12 : undefined}
                   required
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
@@ -304,11 +428,27 @@ export default function Dashboard() {
                 </button>
               </span>
             </label>
-            {message && <p className="notice error">{message}</p>}
+            {registrationMode && (
+              <label>
+                Confirm password
+                <input
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  minLength={12}
+                  required
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                />
+              </label>
+            )}
+            {message && <p className="notice error" role="alert">{message}</p>}
             <button disabled={busy} className="button primary">
-              {busy ? "Signing in..." : "Sign in"}
+              {busy
+                ? registrationMode ? "Creating account..." : "Signing in..."
+                : registrationMode ? "Create hospital account" : "Sign in"}
             </button>
           </form>
+          {!registrationMode && <>
           <div className="login-divider"><span>or</span></div>
           <button
             type="button"
@@ -326,11 +466,15 @@ export default function Dashboard() {
               ? "Checking Google sign-in..."
               : googleStatus === "ready"
                 ? "Continue with Google"
-                : "Google sign-in unavailable"}
+                : googleStatus === "not_configured" && isLocalApp
+                  ? "Google sign-in not configured locally"
+                  : "Google sign-in unavailable"}
           </button>
           <p className="google-note">
             {googleStatus === "not_configured"
-              ? "Google sign-in must be configured by the administrator. Use your hospital email and password for now."
+              ? isLocalApp
+                ? "Google sign-in is configured on the deployed site, but this local app has no OAuth credentials. Use the production site or configure local OAuth credentials and the localhost callback URI."
+                : "Google sign-in must be configured by the administrator. Use your hospital email and password for now."
               : googleStatus === "unavailable"
                 ? "Google sign-in status could not be checked. Refresh the page or use your hospital email and password."
                 : "Use the verified Google account matching your hospital account email."}
@@ -399,11 +543,17 @@ export default function Dashboard() {
               </p>
             </div>
           )}
+          </>}
           <p className="fine-print">Hospital accounts only. Donor tracking is never shown to public users.</p>
         </section>
       </main>
     );
   }
+
+  const hospitalLocation =
+    hospital.latitude !== null && hospital.longitude !== null
+      ? { latitude: hospital.latitude, longitude: hospital.longitude }
+      : null;
 
   return (
     <main className="app-shell">
@@ -430,6 +580,57 @@ export default function Dashboard() {
           <div className="live-indicator"><span /> Live updates · every 10 sec</div>
         </section>
         {message && <p className="notice">{message}</p>}
+        {(!hospitalLocation || !hospital.address) && (
+          <section className="panel location-setup">
+            <div className="section-heading">
+              <div><p className="eyebrow">REQUIRED FOR MATCHING</p><h2>Set your hospital location</h2></div>
+            </div>
+            <p className="muted">
+              Add your address and coordinates to search within 5 km and calculate donor ETAs.
+              Use the coordinates for your hospital entrance or emergency department.
+            </p>
+            <form className="stack-form location-form" onSubmit={saveHospitalLocation}>
+              <label>
+                Hospital address
+                <input
+                  required
+                  maxLength={300}
+                  value={hospitalAddress}
+                  onChange={(event) => setHospitalAddress(event.target.value)}
+                />
+              </label>
+              <div className="location-coordinate-fields">
+                <label>
+                  Latitude
+                  <input
+                    required
+                    type="number"
+                    step="any"
+                    min="-90"
+                    max="90"
+                    value={hospitalLatitude}
+                    onChange={(event) => setHospitalLatitude(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Longitude
+                  <input
+                    required
+                    type="number"
+                    step="any"
+                    min="-180"
+                    max="180"
+                    value={hospitalLongitude}
+                    onChange={(event) => setHospitalLongitude(event.target.value)}
+                  />
+                </label>
+              </div>
+              <button disabled={busy} className="button primary">
+                {busy ? "Saving..." : "Save hospital location"}
+              </button>
+            </form>
+          </section>
+        )}
 
         <section className="dashboard-grid">
           <article className="panel request-panel">
@@ -459,7 +660,10 @@ export default function Dashboard() {
                   onChange={(event) => setUnitsRequired(Number(event.target.value))}
                 />
               </label>
-              <button disabled={busy} className="button primary">
+              <button
+                disabled={busy || !hospitalLocation || !hospital.address}
+                className="button primary"
+              >
                 {busy ? "Submitting..." : "Find nearby donors"}
               </button>
             </form>
@@ -482,17 +686,22 @@ export default function Dashboard() {
             <div><p className="eyebrow">ARRIVAL MONITOR</p><h2>Live donor tracking</h2></div>
             <span className="live-indicator"><span /> Restricted hospital view</span>
           </div>
-          {trackedDonors.length ? (
+          {!hospitalLocation ? (
+            <div className="empty-state">
+              <strong>Hospital location required</strong>
+              <span>Set your location above to view donor positions and ETAs.</span>
+            </div>
+          ) : trackedDonors.length ? (
             <div className="tracking-grid">
               <div className="map-card" aria-label="Illustrative map of hospital and donor locations">
                 <div className="map-grid" />
                 <div className="radius-ring" />
-                <div className="hospital-pin" style={mapPosition(hospital.latitude, hospital.longitude, hospital)}>H</div>
+                <div className="hospital-pin" style={mapPosition(hospitalLocation.latitude, hospitalLocation.longitude, hospitalLocation.latitude, hospitalLocation.longitude)}>H</div>
                 {trackedDonors.map((item, index) => (
                   <div
                     key={`${item.request.id}-${item.id}`}
                     className="donor-pin"
-                    style={mapPosition(item.location!.latitude, item.location!.longitude, hospital, index)}
+                    style={mapPosition(item.location!.latitude, item.location!.longitude, hospitalLocation.latitude, hospitalLocation.longitude, index)}
                     title={`${item.name}: ETA ${item.location!.etaMinutes} minutes`}
                   >{index + 1}</div>
                 ))}
@@ -617,14 +826,15 @@ function InventoryRow({
 function mapPosition(
   latitude: number,
   longitude: number,
-  hospital: Hospital,
+  hospitalLatitude: number,
+  hospitalLongitude: number,
   index = -1,
 ) {
-  const latOffsetKm = (latitude - hospital.latitude) * 110.574;
+  const latOffsetKm = (latitude - hospitalLatitude) * 110.574;
   const lonOffsetKm =
-    (longitude - hospital.longitude) *
+    (longitude - hospitalLongitude) *
     111.32 *
-    Math.cos((hospital.latitude * Math.PI) / 180);
+    Math.cos((hospitalLatitude * Math.PI) / 180);
   const jitter = index >= 0 ? (index % 2 === 0 ? 2 : -2) : 0;
   return {
     left: `${Math.min(90, Math.max(10, 50 + lonOffsetKm * 7 + jitter))}%`,

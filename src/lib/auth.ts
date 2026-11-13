@@ -69,6 +69,13 @@ export async function hospitalForRequest() {
   if (!hospitalId) return null;
   return db.hospital.findUnique({
     where: { id: hospitalId },
-    select: { id: true, name: true, email: true, latitude: true, longitude: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      address: true,
+      latitude: true,
+      longitude: true,
+    },
   });
 }
