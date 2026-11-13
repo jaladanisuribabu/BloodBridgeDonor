@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BloodGroup {
+  O_NEGATIVE
+  O_POSITIVE
+  A_NEGATIVE
+  A_POSITIVE
+  B_NEGATIVE
+  B_POSITIVE
+  AB_NEGATIVE
+  AB_POSITIVE
+}
+
+enum RequestState {
+  OPEN
+  FULFILLED
+  CANCELLED
+}
+
+enum CallLogStatus {
+  QUEUED
+  INITIATED
+  RINGING
+  IN_PROGRESS
+  ACCEPTED
+  COMPLETED
+  UNAVAILABLE
+  NO_ANSWER
+  FAILED
+  CANCELLED
+}
+
+model Donor {
+  id                 String          @id @default(cuid())
+  name               String
+  phone              String          @unique
+  bloodGroup         BloodGroup
+  available          Boolean         @default(true)
+  trackingConsent    Boolean         @default(false)
+  locationTokenHash  String          @unique
+  latitude           Float?
+  longitude          Float?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  callLogs           CallLog[]
+  locationTracking   LocationTracking[]
+
+  @@index([bloodGroup, available, trackingConsent])
+}
+
+model Hospital {
+  id           String            @id @default(cuid())
+  name         String
+  address      String
+  email        String            @unique
+  passwordHash String
+  latitude     Float
+  longitude    Float
+  createdAt    DateTime          @default(now())
+  requests     EmergencyRequest[]
+  inventory    BloodInventory[]
+}
+
+model BloodInventory {
+  id            String     @id @default(cuid())
+  hospitalId    String
+  bloodGroup    BloodGroup
+  unitsAvailable Int       @default(0)
+  updatedAt     DateTime   @updatedAt
+  hospital      Hospital   @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  @@unique([hospitalId, bloodGroup])
+}
+
+model EmergencyRequest {
+  id             String            @id @default(cuid())
+  hospitalId     String
+  bloodGroup     BloodGroup
+  unitsRequired  Int
+  unitsConfirmed Int               @default(0)
+  state          RequestState      @default(OPEN)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  hospital       Hospital          @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  callLogs       CallLog[]
+  locationTracking LocationTracking[]
+
+  @@index([hospitalId, state, createdAt])
+}
+
+model CallLog {
+  id                String        @id @default(cuid())
+  emergencyRequestId String
+  donorId           String
+  twilioCallSid     String?       @unique
+  status            CallLogStatus @default(QUEUED)
+  responseDigit     String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  emergencyRequest  EmergencyRequest @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
+  donor             Donor         @relation(fields: [donorId], references: [id], onDelete: Cascade)
+  locationTracking  LocationTracking[]
+
+  @@unique([emergencyRequestId, donorId])
+  @@index([emergencyRequestId, status])
+}
+
+model LocationTracking {
+  id                String        @id @default(cuid())
+  emergencyRequestId String
+  callLogId         String
+  donorId           String
+  latitude          Float
+  longitude         Float
+  accuracyMeters    Float?
+  recordedAt        DateTime      @default(now())
+  emergencyRequest  EmergencyRequest @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
+  callLog           CallLog       @relation(fields: [callLogId], references: [id], onDelete: Cascade)
+  donor             Donor         @relation(fields: [donorId], references: [id], onDelete: Cascade)
+
+  @@index([emergencyRequestId, donorId, recordedAt])
+}
