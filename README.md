@@ -160,3 +160,10 @@ Before deploying, provision PostgreSQL, use a unique `SESSION_SECRET`, set `APP_
 - Add operational on-call monitoring, webhook retry/dead-letter handling, rate limiting, backup/restore drills, retention policy, audit review, and donor-consent administration before real emergency use.
 - Perform legal, privacy, security, accessibility, and healthcare compliance review for the deployment jurisdiction. Do not treat this project as HIPAA-compliant or as a substitute for emergency services.
 - Use a managed database with encryption, restricted network access, and tested backups. Limit database and Twilio credentials to server-side deployment secrets.
+
+## Project handover documents
+
+- [Complete project documentation and database inspection guide](./docs/BloodBridge-Project-Documentation.docx)
+- [Project presentation](./docs/BloodBridge-Project-Presentation.pptx)
+
+To inspect a **local development database**, configure `DATABASE_URL` in the ignored `.env` file, apply migrations with `npm run db:migrate`, and run `npx prisma studio`. Prisma Studio can edit data, so use it with test data. For production, use the authorized PostgreSQL provider console and a read-only database role; do not expose connection strings or export donor, patient, password-hash, token, or location data. The documentation includes step-by-step Windows instructions and aggregate-only SQL examples.
