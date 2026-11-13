@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import BloodCellBackdrop from "@/components/blood-cell-backdrop";
 
 const groups = [
   "O_NEGATIVE",
@@ -124,6 +125,7 @@ export default function PatientPage() {
   if (!patient) {
     return (
       <main className="login-shell">
+        <BloodCellBackdrop />
         <section className="login-card">
           <a className="patient-back-link" href="/hospital">← Hospital sign in</a>
           <div className="brand-mark">B</div>

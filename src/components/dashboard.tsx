@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { DonorImportRow, parseDonorCsv } from "@/lib/donor-csv";
+import BloodCellBackdrop from "@/components/blood-cell-backdrop";
 
 const bloodGroups = [
   "O_NEGATIVE",
@@ -158,6 +159,8 @@ export default function Dashboard() {
   const [hospitalCity, setHospitalCity] = useState("");
   const [hospitalLatitude, setHospitalLatitude] = useState("");
   const [hospitalLongitude, setHospitalLongitude] = useState("");
+  const [locationError, setLocationError] = useState("");
+  const [locationBusy, setLocationBusy] = useState(false);
   const [hospitalPhone, setHospitalPhone] = useState("");
   const [settingsEmail, setSettingsEmail] = useState("");
   const [settingsName, setSettingsName] = useState("");
@@ -427,6 +430,31 @@ export default function Dashboard() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function useCurrentHospitalLocation() {
+    setLocationError("");
+    if (!navigator.geolocation) {
+      setLocationError("Location access is not available in this browser.");
+      return;
+    }
+    setLocationBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setHospitalLatitude(position.coords.latitude.toString());
+        setHospitalLongitude(position.coords.longitude.toString());
+        setLocationBusy(false);
+      },
+      (error) => {
+        setLocationError(
+          error.code === error.PERMISSION_DENIED
+            ? "Allow location access in your browser settings, then try again."
+            : "Could not determine your current location. Check location services and try again.",
+        );
+        setLocationBusy(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
   }
 
   async function requestPasswordReset(event: FormEvent<HTMLFormElement>) {
@@ -716,6 +744,7 @@ export default function Dashboard() {
   if (!hospital) {
     return (
       <main className="login-shell">
+        <BloodCellBackdrop />
         <section className="login-card">
           <div className="brand-mark">B</div>
           <p className="eyebrow">HOSPITAL OPERATIONS</p>
@@ -952,7 +981,9 @@ export default function Dashboard() {
         </aside>
 
       <div className="page-content">
-        <section className={`welcome-row dashboard-view${activeSection === "overview" ? "" : " section-hidden"}`} id="overview">
+        <div className={`overview-stage dashboard-view${activeSection === "overview" ? "" : " section-hidden"}`} id="overview">
+        <BloodCellBackdrop />
+        <section className="welcome-row">
           <div>
             <p className="eyebrow">HOSPITAL OPERATIONS · OVERVIEW</p>
             <h1>Good day, {hospital.name}</h1>
@@ -963,7 +994,7 @@ export default function Dashboard() {
             <span className="overview-date">{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>
           </div>
         </section>
-        <section className={`metric-grid dashboard-view${activeSection === "overview" ? "" : " section-hidden"}`} aria-label="Hospital overview metrics">
+        <section className="metric-grid" aria-label="Hospital overview metrics">
           <article className="metric-card">
             <div className="metric-icon rose">♧</div>
             <span className="metric-label">Donor network</span>
@@ -989,15 +1020,14 @@ export default function Dashboard() {
             <small>sharing live location</small>
           </article>
         </section>
+        </div>
         {message && <p className="notice">{message}</p>}
-        {(!hospitalLocation || !hospital.address || !hospital.city) && (
           <section className={`panel location-setup dashboard-view${activeSection === "settings" ? "" : " section-hidden"}`}>
             <div className="section-heading">
-              <div><p className="eyebrow">REQUIRED FOR MATCHING</p><h2>Set your hospital location</h2></div>
+              <div><p className="eyebrow">{hospitalLocation && hospital.address && hospital.city ? "MAP & ADDRESS" : "REQUIRED FOR MATCHING"}</p><h2>{hospitalLocation && hospital.address && hospital.city ? "Hospital location" : "Set your hospital location"}</h2></div>
             </div>
             <p className="muted">
-              Add your address and coordinates to search within 5 km and calculate donor ETAs.
-              Use the coordinates for your hospital entrance or emergency department.
+              Enter the facility address and city. Use the location button at the hospital entrance or emergency department to pin the matching point on Google Maps.
             </p>
             <form className="stack-form location-form" onSubmit={saveHospitalLocation}>
               <label>
@@ -1018,38 +1048,38 @@ export default function Dashboard() {
                   onChange={(event) => setHospitalCity(event.target.value)}
                 />
               </label>
-              <div className="location-coordinate-fields">
-                <label>
-                  Latitude
-                  <input
-                    required
-                    type="number"
-                    step="any"
-                    min="-90"
-                    max="90"
-                    value={hospitalLatitude}
-                    onChange={(event) => setHospitalLatitude(event.target.value)}
+              <div className="map-location-tools">
+                <button type="button" className="button subtle" disabled={locationBusy} onClick={useCurrentHospitalLocation}>
+                  {locationBusy ? "Finding location..." : "Use this device's live location"}
+                </button>
+                <span className="helper-text">
+                  {hospitalLatitude && hospitalLongitude
+                    ? "Map pin selected. Save to update matching and ETA calculations."
+                    : "Location is used only to match nearby donors and calculate ETA."}
+                </span>
+              </div>
+              {locationError && <p className="notice error" role="alert">{locationError}</p>}
+              <div className="google-map-preview">
+                {hospitalLatitude && hospitalLongitude ? (
+                  <iframe
+                    title="Google Maps hospital location preview"
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    src={`https://maps.google.com/maps?q=${encodeURIComponent(`${hospitalLatitude},${hospitalLongitude}`)}&z=16&output=embed`}
                   />
-                </label>
-                <label>
-                  Longitude
-                  <input
-                    required
-                    type="number"
-                    step="any"
-                    min="-180"
-                    max="180"
-                    value={hospitalLongitude}
-                    onChange={(event) => setHospitalLongitude(event.target.value)}
-                  />
-                </label>
+                ) : (
+                  <div className="map-preview-empty">
+                    <span className="map-preview-pin">⌖</span>
+                    <strong>Choose a hospital location</strong>
+                    <span>Allow location access to preview the pin on Google Maps.</span>
+                  </div>
+                )}
               </div>
               <button disabled={busy} className="button primary">
                 {busy ? "Saving..." : "Save hospital location"}
               </button>
             </form>
           </section>
-        )}
 
         <section className={`panel dashboard-view${activeSection === "settings" ? "" : " section-hidden"}`}>
           <div className="section-heading">

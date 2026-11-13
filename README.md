@@ -8,6 +8,7 @@ BloodBridge is a hospital-facing web application for emergency blood requests, n
 ## Architecture
 
 - **Web app and API:** Next.js App Router, TypeScript, React.
+- **Device support:** responsive desktop and Android-sized layouts; the web manifest supports adding BloodBridge to the Android or desktop home screen where the browser supports app installation. This is a progressive web app, not a separately packaged native Android APK.
 - **Database:** PostgreSQL with Prisma migrations.
 - **Matching:** exact blood-group match; consented, available donors within 5 km, sorted by Haversine distance. A database row lock prevents one donor being reserved concurrently by two requests.
 - **Voice:** Twilio Programmable Voice, with signed webhooks and DTMF response handling.
@@ -42,6 +43,8 @@ The `20261113190000_patient_portal_and_staff_records` migration adds the patient
 ## Local development
 
 Requirements: Node.js 22+, npm, and PostgreSQL 16+. Docker Compose is also supplied, but Docker is not required if PostgreSQL is already running.
+
+On Android Chrome, open the deployed site and use **Install app** / **Add to Home screen** from the browser menu. On desktop, use the browser's install control when available. The hospital map preview embeds a Google Maps view without exposing coordinate inputs; the hospital must grant browser location permission at the facility when setting its matching pin. The stored coordinates support 5 km donor matching and ETA calculations.
 
 1. Copy `.env.example` to `.env`. Replace `SESSION_SECRET` with a random value of at least 32 characters and set the hospital name, physical address, email, password (12+ characters), and coordinates. `POSTGRES_PASSWORD` and the example database URL are development-only.
 2. Start PostgreSQL, or use `docker compose up --build` after creating `.env`. Compose runs database migrations before starting the web server.
