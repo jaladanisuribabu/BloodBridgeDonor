@@ -87,6 +87,7 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | GET | `/api/hospital/donors?bloodGroup=A_POSITIVE` | Preview available matches within 5 km |
 | POST | `/api/hospital/requests/:id/complete` | Close out accepted donor call records |
 | GET / PUT | `/api/hospital/inventory` | Read seven-day baseline forecast / update stock |
+| GET / POST | `/api/hospital/members` | Read donor-network counts / import up to 150 explicitly consented donors |
 | POST / PATCH / DELETE | `/api/donors/location` | Consent-token GPS, donor availability, and tracking revocation |
 | POST | `/api/ivr/answer` | Twilio voice prompt |
 | POST | `/api/ivr/response` | Process 1/2/no response |
@@ -105,6 +106,12 @@ Without Twilio credentials, emergency requests are saved but calls cannot start;
 Configure `RESEND_API_KEY` and `PASSWORD_RESET_FROM` in the deployment environment. The sender must be verified with Resend. Reset requests are delivered to the account email and use a single-use token that expires after 30 minutes. The API returns the same success message whether or not an account exists, and applies per-email and per-IP request limits. Run the new Prisma migration before deploying these routes.
 
 Forgotten account emails are not disclosed by the sign-in page. The hospital user must contact their hospital administrator or IT team through an official channel to verify identity and recover or update the registered email.
+
+## Donor network import
+
+The hospital dashboard separates live network counts from its 150-profile fictional preview. Demo profiles are display-only and are never written to the donor database or included in calling. To import actual records, download the dashboard CSV template and provide `Name,Phone,BloodGroup,Latitude,Longitude` columns. Phone numbers must use E.164 format (for example, `+14155550123`); blood groups use values such as `A_POSITIVE` or `O_NEGATIVE`. Imports are limited to 150 donors per file and reject duplicate phone numbers and invalid coordinates.
+
+Import only donors who have explicitly agreed to emergency contact and location sharing. The consent confirmation is required for every import. Donors are created as available and tracking-consented; each receives a randomly generated activation token for sharing location. The token CSV is downloaded only once after a successful import. Treat it as sensitive bearer credentials, deliver each donor’s token through a secure channel, and never commit or publicly share the file. The database stores token hashes rather than the plaintext tokens.
 
 ## Hospital registration
 

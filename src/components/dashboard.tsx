@@ -1,6 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { DonorImportRow, parseDonorCsv } from "@/lib/donor-csv";
 
 const bloodGroups = [
   "O_NEGATIVE",
@@ -52,6 +60,22 @@ type Forecast = {
   projectedShortage: number;
   confidence: "low" | "moderate";
 };
+type DonorNetwork = {
+  total: number;
+  callable: number;
+  groups: { bloodGroup: BloodGroup; count: number }[];
+};
+
+const demoMembers = Array.from({ length: 150 }, (_, index) => ({
+  id: index + 1,
+  name: `Demo Member ${String(index + 1).padStart(3, "0")}`,
+  bloodGroup: bloodGroups[(index * 5 + Math.floor(index / 8)) % bloodGroups.length],
+}));
+
+const demoGroupCounts = bloodGroups.map((group) => ({
+  bloodGroup: group,
+  count: demoMembers.filter((member) => member.bloodGroup === group).length,
+}));
 
 async function responseError(response: Response, fallback: string): Promise<string> {
   const data = (await response.json().catch(() => null)) as
@@ -74,6 +98,7 @@ export default function Dashboard() {
   const [hospital, setHospital] = useState<Hospital | null>(null);
   const [requests, setRequests] = useState<EmergencyRequest[]>([]);
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
+  const [donorNetwork, setDonorNetwork] = useState<DonorNetwork | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [registrationMode, setRegistrationMode] = useState(false);
@@ -95,19 +120,26 @@ export default function Dashboard() {
   const [recoveryError, setRecoveryError] = useState(false);
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>("O_NEGATIVE");
   const [unitsRequired, setUnitsRequired] = useState(1);
+  const [donorImportRows, setDonorImportRows] = useState<DonorImportRow[]>([]);
+  const [donorImportFilename, setDonorImportFilename] = useState("");
+  const [donorImportConsent, setDonorImportConsent] = useState(false);
+  const [donorImportBusy, setDonorImportBusy] = useState(false);
+  const [donorImportMessage, setDonorImportMessage] = useState("");
+  const [donorImportError, setDonorImportError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
-    const [requestResponse, inventoryResponse] = await Promise.all([
+    const [requestResponse, inventoryResponse, membersResponse] = await Promise.all([
       fetch("/api/hospital/requests", { cache: "no-store" }),
       fetch("/api/hospital/inventory", { cache: "no-store" }),
+      fetch("/api/hospital/members", { cache: "no-store" }),
     ]);
     if (requestResponse.status === 401) {
       setHospital(null);
       return;
     }
-    if (!requestResponse.ok || !inventoryResponse.ok) {
+    if (!requestResponse.ok || !inventoryResponse.ok || !membersResponse.ok) {
       throw new Error("Unable to refresh hospital data.");
     }
     const requestData = (await requestResponse.json()) as {
@@ -116,8 +148,10 @@ export default function Dashboard() {
     const inventoryData = (await inventoryResponse.json()) as {
       forecasts: Forecast[];
     };
+    const membersData = (await membersResponse.json()) as DonorNetwork;
     setRequests(requestData.requests);
     setForecasts(inventoryData.forecasts);
+    setDonorNetwork(membersData);
   }, []);
 
   useEffect(() => {
@@ -338,11 +372,91 @@ export default function Dashboard() {
     }
   }
 
+  async function selectDonorCsv(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    setDonorImportError(false);
+    setDonorImportMessage("");
+    setDonorImportRows([]);
+    setDonorImportFilename("");
+    if (!file) return;
+    try {
+      const rows = parseDonorCsv(await file.text());
+      setDonorImportRows(rows);
+      setDonorImportFilename(file.name);
+      setDonorImportMessage(`${rows.length} donor records are ready to review.`);
+    } catch (error) {
+      setDonorImportError(true);
+      setDonorImportMessage(requestError(error, "Could not read this CSV file."));
+    }
+  }
+
+  async function importDonors(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!donorImportConsent || donorImportRows.length === 0) return;
+    setDonorImportBusy(true);
+    setDonorImportError(false);
+    setDonorImportMessage("");
+    try {
+      const response = await fetch("/api/hospital/members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          consentConfirmed: true,
+          donors: donorImportRows,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await responseError(response, "Donor import failed."));
+      }
+      const result = (await response.json()) as {
+        imported: number;
+        activationTokens: { name: string; phone: string; token: string }[];
+      };
+      downloadCsv(
+        "bloodbridge-donor-activation-tokens.csv",
+        [
+          ["Name", "Phone", "LocationToken"],
+          ...result.activationTokens.map((donor) => [
+            donor.name,
+            donor.phone,
+            donor.token,
+          ]),
+        ],
+      );
+      setDonorImportRows([]);
+      setDonorImportFilename("");
+      setDonorImportConsent(false);
+      setDonorImportMessage(
+        `${result.imported} donors imported. A one-time activation-token file was downloaded; deliver each token securely to its donor.`,
+      );
+      try {
+        await refresh();
+      } catch (error) {
+        setDonorImportError(true);
+        setDonorImportMessage(
+          `${result.imported} donors were imported and the activation-token file was downloaded, but the dashboard could not refresh: ${requestError(error, "refresh failed.")}`,
+        );
+      }
+    } catch (error) {
+      setDonorImportError(true);
+      setDonorImportMessage(requestError(error, "Donor import failed."));
+    } finally {
+      setDonorImportBusy(false);
+    }
+  }
+
+  function downloadDonorTemplate() {
+    downloadCsv("bloodbridge-donor-import-template.csv", [
+      ["Name", "Phone", "BloodGroup", "Latitude", "Longitude"],
+    ]);
+  }
+
   async function signOut() {
     await fetch("/api/hospital/logout", { method: "POST" });
     setHospital(null);
     setRequests([]);
     setForecasts([]);
+    setDonorNetwork(null);
   }
 
   const activeRequests = requests.filter((request) => request.state === "OPEN");
@@ -561,6 +675,7 @@ export default function Dashboard() {
         <a className="brand" href="/hospital">
           <span className="brand-mark small">B</span> BloodBridge
         </a>
+        <div className="topbar-label">Hospital coordination center</div>
         <div className="account">
           <div>
             <strong>{hospital.name}</strong>
@@ -570,14 +685,61 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="page-content">
-        <section className="welcome-row">
-          <div>
-            <p className="eyebrow">EMERGENCY COORDINATION</p>
-            <h1>Hospital dashboard</h1>
-            <p className="muted">Manage urgent requests, inventory outlook, and donor arrivals.</p>
+      <div className="dashboard-layout">
+        <aside className="dashboard-sidebar" aria-label="Dashboard sections">
+          <p className="sidebar-label">WORKSPACE</p>
+          <nav>
+            <a href="#overview"><span>◫</span> Overview</a>
+            <a href="#emergency"><span>✚</span> Emergency dispatch</a>
+            <a href="#tracking"><span>⌖</span> Donor tracking</a>
+            <a href="#inventory"><span>▤</span> Blood inventory</a>
+            <a href="#members"><span>♧</span> Donor network</a>
+            <a href="#requests"><span>◷</span> Recent requests</a>
+          </nav>
+          <div className="sidebar-help">
+            <span className="sidebar-status-dot" />
+            <strong>Protected workspace</strong>
+            <small>Only your hospital team can view this dashboard.</small>
           </div>
-          <div className="live-indicator"><span /> Live updates · every 10 sec</div>
+        </aside>
+
+      <div className="page-content">
+        <section className="welcome-row" id="overview">
+          <div>
+            <p className="eyebrow">HOSPITAL OPERATIONS · OVERVIEW</p>
+            <h1>Good day, {hospital.name}</h1>
+            <p className="muted">Your emergency coordination workspace at a glance.</p>
+          </div>
+          <div className="overview-actions">
+            <div className="live-indicator"><span /> Live updates · every 10 sec</div>
+            <span className="overview-date">{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</span>
+          </div>
+        </section>
+        <section className="metric-grid" aria-label="Hospital overview metrics">
+          <article className="metric-card">
+            <div className="metric-icon rose">♧</div>
+            <span className="metric-label">Donor network</span>
+            <strong>{donorNetwork?.total ?? "—"}</strong>
+            <small>registered members</small>
+          </article>
+          <article className="metric-card">
+            <div className="metric-icon green">✓</div>
+            <span className="metric-label">Eligible donors</span>
+            <strong>{donorNetwork?.callable ?? "—"}</strong>
+            <small>consented · location enabled</small>
+          </article>
+          <article className="metric-card">
+            <div className="metric-icon amber">✚</div>
+            <span className="metric-label">Open emergencies</span>
+            <strong>{activeRequests.length}</strong>
+            <small>currently seeking donors</small>
+          </article>
+          <article className="metric-card">
+            <div className="metric-icon blue">⌖</div>
+            <span className="metric-label">Donors en route</span>
+            <strong>{trackedDonors.length}</strong>
+            <small>sharing live location</small>
+          </article>
         </section>
         {message && <p className="notice">{message}</p>}
         {(!hospitalLocation || !hospital.address) && (
@@ -632,7 +794,7 @@ export default function Dashboard() {
           </section>
         )}
 
-        <section className="dashboard-grid">
+        <section className="dashboard-grid" id="emergency">
           <article className="panel request-panel">
             <div className="section-heading">
               <div><p className="eyebrow">NEW MATCH</p><h2>Request blood units</h2></div>
@@ -670,18 +832,17 @@ export default function Dashboard() {
             <p className="helper-text">Eligible, consenting donors are called in groups of up to five within 5 km.</p>
           </article>
 
-          <article className="panel stat-panel">
-            <p className="eyebrow">ACTIVE EMERGENCIES</p>
-            <div className="stat-number">{activeRequests.length}</div>
-            <p className="muted">Requests still seeking confirmed units</p>
-            <div className="stat-divider" />
-            <p className="eyebrow">DONORS TRACKED</p>
-            <div className="stat-number">{trackedDonors.length}</div>
-            <p className="muted">Accepted donors sharing their location</p>
+          <article className="panel dispatch-guide">
+            <p className="eyebrow">AUTOMATED DISPATCH</p>
+            <h2>Smart donor call queue</h2>
+            <p className="muted">The system contacts eligible, consenting donors near your hospital and keeps the response queue moving.</p>
+            <div className="dispatch-rule"><span>01</span><div><strong>5 km radius</strong><small>Exact blood-group match near this hospital</small></div></div>
+            <div className="dispatch-rule"><span>02</span><div><strong>Up to 5 calls at once</strong><small>Rollover continues until units are confirmed</small></div></div>
+            <a href="#requests" className="text-link">View recent requests <span>→</span></a>
           </article>
         </section>
 
-        <section className="panel">
+        <section className="panel" id="tracking">
           <div className="section-heading">
             <div><p className="eyebrow">ARRIVAL MONITOR</p><h2>Live donor tracking</h2></div>
             <span className="live-indicator"><span /> Restricted hospital view</span>
@@ -736,7 +897,7 @@ export default function Dashboard() {
           )}
         </section>
 
-        <section className="panel">
+        <section className="panel" id="inventory">
           <div className="section-heading">
             <div><p className="eyebrow">SHORTAGE OUTLOOK</p><h2>Seven-day blood forecast</h2></div>
             <span className="helper-text">Based on the previous 90 days of requests</span>
@@ -758,7 +919,104 @@ export default function Dashboard() {
           <p className="fine-print">Planning estimate only—not a clinical prediction. Low-confidence estimates have fewer than 10 historical units.</p>
         </section>
 
-        <section className="panel">
+        <section className="panel donor-network-panel" id="members">
+          <div className="section-heading">
+            <div><p className="eyebrow">MEMBER MANAGEMENT</p><h2>Donor network</h2></div>
+            <span className="demo-badge">Demo preview is separate from real donors</span>
+          </div>
+          <div className="member-network-grid">
+            <article className="network-summary">
+              <span className="metric-label">Real network members</span>
+              <strong className="network-total">{donorNetwork?.total ?? "—"}</strong>
+              <p>Actual donor records in the shared network. Fictional preview profiles are not included.</p>
+              <div className="member-callable">
+                <span className="sidebar-status-dot" />
+                <strong>{donorNetwork?.callable ?? "—"} consented and location-enabled</strong>
+              </div>
+              <div className="blood-group-summary">
+                {(donorNetwork?.groups ?? []).map((group) => (
+                  <div key={group.bloodGroup}>
+                    <span>{formatGroup(group.bloodGroup)}</span>
+                    <strong>{group.count}</strong>
+                  </div>
+                ))}
+                {!donorNetwork?.groups.length && <span className="muted">No real donor profiles imported yet.</span>}
+              </div>
+            </article>
+
+            <article className="import-card">
+              <div className="import-card-heading">
+                <div className="metric-icon blue">↑</div>
+                <div><strong>Import real donor members</strong><small>Secure CSV · up to 150 records at a time</small></div>
+              </div>
+              <button type="button" className="button subtle template-button" onClick={downloadDonorTemplate}>
+                Download CSV template
+              </button>
+              <form className="donor-import-form" onSubmit={(event) => void importDonors(event)}>
+                <label className="file-picker">
+                  <span>{donorImportFilename || "Choose donor CSV file"}</span>
+                  <input type="file" accept=".csv,text/csv" onChange={(event) => void selectDonorCsv(event)} />
+                </label>
+                {donorImportRows.length > 0 && (
+                  <p className="import-preview">{donorImportRows.length} records ready. Review the file before importing.</p>
+                )}
+                <label className="consent-confirmation">
+                  <input
+                    type="checkbox"
+                    checked={donorImportConsent}
+                    onChange={(event) => setDonorImportConsent(event.target.checked)}
+                  />
+                  <span>I confirm every donor in this file has explicitly agreed to be contacted and share the listed location for emergency matching.</span>
+                </label>
+                {donorImportMessage && (
+                  <p className={`notice${donorImportError ? " error" : ""}`} role="status">{donorImportMessage}</p>
+                )}
+                <button
+                  type="submit"
+                  className="button primary"
+                  disabled={donorImportBusy || !donorImportRows.length || !donorImportConsent}
+                >
+                  {donorImportBusy ? "Importing members..." : "Import consented donors"}
+                </button>
+              </form>
+              <p className="import-safety-note">Activation tokens are downloaded once after import. Keep the token file private and deliver each donor’s token through a secure channel. Demo profiles are never imported or called.</p>
+            </article>
+          </div>
+
+          <article className="demo-preview">
+            <div className="demo-preview-header">
+              <div>
+                <span className="demo-badge">FICTIONAL DEMO DATA</span>
+                <h3>150-member dashboard preview</h3>
+                <p>Sample display data only. These names and blood groups are generated examples, not real people or available donors.</p>
+              </div>
+              <strong className="demo-count">150 <small>sample profiles</small></strong>
+            </div>
+            <div className="demo-content">
+              <div className="demo-group-bars">
+                {demoGroupCounts.map((group) => (
+                  <div className="demo-group-row" key={group.bloodGroup}>
+                    <span>{formatGroup(group.bloodGroup)}</span>
+                    <div className="demo-bar"><i style={{ width: `${(group.count / 150) * 100}%` }} /></div>
+                    <strong>{group.count}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className="demo-member-list">
+                {demoMembers.slice(0, 6).map((member) => (
+                  <div className="demo-member-row" key={member.id}>
+                    <span className="demo-avatar">{String(member.id).padStart(2, "0")}</span>
+                    <span><strong>{member.name}</strong><small>Fictional sample profile</small></span>
+                    <b>{formatGroup(member.bloodGroup)}</b>
+                  </div>
+                ))}
+                <span className="demo-list-footer">Showing 6 of 150 fictional sample profiles</span>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section className="panel" id="requests">
           <div className="section-heading"><div><p className="eyebrow">CALL QUEUE</p><h2>Recent emergency requests</h2></div></div>
           {requests.length ? (
             <div className="request-list">
@@ -781,6 +1039,7 @@ export default function Dashboard() {
             </div>
           ) : <div className="empty-state compact">No requests yet. Submit an emergency request to start a donor search.</div>}
         </section>
+      </div>
       </div>
       <footer>BloodBridge · Emergency coordination prototype · Protect donor data and use only with donor consent.</footer>
     </main>
@@ -848,4 +1107,24 @@ function formatGroup(group: BloodGroup) {
 
 function formatStatus(status: string) {
   return status.replaceAll("_", " ").toLowerCase();
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const contents = rows
+    .map((row) =>
+      row
+        .map((value) => `"${value.replaceAll('"', '""')}"`)
+        .join(","),
+    )
+    .join("\r\n");
+  const url = URL.createObjectURL(
+    new Blob([contents], { type: "text/csv;charset=utf-8" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
