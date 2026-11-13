@@ -12,6 +12,7 @@ BloodBridge is a hospital-facing web application for emergency blood requests, n
 - **Matching:** exact blood-group match; consented, available donors within 5 km, sorted by Haversine distance. A database row lock prevents one donor being reserved concurrently by two requests.
 - **Voice:** Twilio Programmable Voice, with signed webhooks and DTMF response handling.
 - **Hospital access:** password hashes using bcrypt and an HTTP-only, signed hospital session cookie. Hospital tracking APIs require that session and scope requests to its hospital.
+- **Patient access:** separate password-based patient accounts and cookies. Patient availability searches return only blood-group totals aggregated by city; they never return hospital names, donor details, patient records, or tracking data.
 - **Google sign-in:** Google OpenID Connect with state, nonce, and PKCE; only verified Google emails matching an existing hospital account are accepted.
 - **Account recovery:** single-use, 30-minute password-reset links delivered by Resend. Reset requests are rate-limited and return a generic message that does not reveal whether an email is registered. Forgotten hospital email recovery is administrator-assisted.
 - **Location:** donors post coordinates with a one-time generated bearer token after accepting. Tracking is opt-in and can be revoked.
@@ -35,6 +36,8 @@ The dated initial migration is `prisma/migrations/20261113154000_initial/migrati
 - enums and indexes, including unique donor-per-request call attempts
 
 Apply migrations using `npm run db:migrate` (deployment) or `npm run db:dev` (local development). Never edit an applied migration; create a new dated migration for later schema changes.
+
+The `20261113190000_patient_portal_and_staff_records` migration adds the patient portal account table, hospital city/mobile/policy fields, confidential hospital patient cases, inventory change history, and donor donation dates. Apply it before deploying this release.
 
 ## Local development
 
@@ -74,6 +77,10 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | Method | Route | Purpose |
 |---|---|---|
 | POST | `/api/hospital/register` | Create a hospital account and sign in |
+| PUT | `/api/hospital/settings` | Re-authenticate and update hospital email, password, mobile, profile name, and donation interval |
+| GET / POST | `/api/hospital/cases` | List or add hospital-private patient blood cases |
+| PATCH | `/api/hospital/cases/:caseId` | Record units issued, atomically debit stock, and audit the change |
+| GET / POST | `/api/hospital/donations` | Read hospital donor history / record donation date and administrative next-review date |
 | POST | `/api/hospital/login` | Create hospital session |
 | GET | `/api/hospital/google/start` | Start Google OpenID Connect sign-in |
 | GET | `/api/hospital/google/callback` | Verify Google identity and create hospital session |
@@ -92,6 +99,9 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | POST | `/api/ivr/answer` | Twilio voice prompt |
 | POST | `/api/ivr/response` | Process 1/2/no response |
 | POST | `/api/ivr/status` | Process Twilio call lifecycle callbacks |
+| POST | `/api/patient/register` | Create a patient portal account |
+| POST | `/api/patient/login` | Sign in to the separate patient portal |
+| GET | `/api/patient/inventory?city=...&bloodGroup=...` | Patient-authenticated city-level aggregate unit availability |
 
 Emergency request input is `{ "bloodGroup": "O_NEGATIVE", "unitsRequired": 2 }`. The target is capped at 20 units. Twilio callbacks are authenticated using `X-Twilio-Signature`; the configured `APP_URL` must exactly match the public HTTPS callback host and scheme.
 
@@ -112,6 +122,14 @@ Forgotten account emails are not disclosed by the sign-in page. The hospital use
 The hospital dashboard separates live network counts from its 150-profile fictional preview. Demo profiles are display-only and are never written to the donor database or included in calling. To import actual records, download the dashboard CSV template and provide `Name,Phone,BloodGroup,Latitude,Longitude` columns. Phone numbers must use E.164 format (for example, `+14155550123`); blood groups use values such as `A_POSITIVE` or `O_NEGATIVE`. Imports are limited to 150 donors per file and reject duplicate phone numbers and invalid coordinates.
 
 Import only donors who have explicitly agreed to emergency contact and location sharing. The consent confirmation is required for every import. Donors are created as available and tracking-consented; each receives a randomly generated activation token for sharing location. The token CSV is downloaded only once after a successful import. Treat it as sensitive bearer credentials, deliver each donor’s token through a secure channel, and never commit or publicly share the file. The database stores token hashes rather than the plaintext tokens.
+
+## Patient portal and hospital records
+
+Patients register and sign in at `/patient`. Search results aggregate units across participating hospitals by city and blood group only; they do not disclose the contributing hospitals, donors, patients, or emergency call data. Availability is not a reservation and should be confirmed with the patient's care team.
+
+Hospital staff use the dashboard's single-section workspace. The separate **Patient records** area stores a name, optional hospital reference, blood group, requested/issued unit totals, and an optional staff note. Issuing additional units atomically decrements the hospital's blood inventory; corrections add the units back. Stock adjustments are retained in a hospital-only audit trail. Avoid entering diagnoses or unnecessary sensitive patient details.
+
+The **Donation history** area records donor/date/time and derives an administrative next-review date from the hospital-configured interval in months. The interval must be selected by the hospital's medical director based on applicable rules; there is no assumed default. Donors with a recorded future review date are excluded from new call matching. A calculated date is not a medical eligibility determination: clinical staff remain responsible for donor screening. Changing the configured interval applies only to future donation records.
 
 ## Hospital registration
 

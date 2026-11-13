@@ -33,6 +33,7 @@ export async function findNearbyDonors(
     WHERE d."bloodGroup" = ${input.bloodGroup}::"BloodGroup"
       AND d."available" = true
       AND d."trackingConsent" = true
+      AND (d."nextEligibleAt" IS NULL OR d."nextEligibleAt" <= CURRENT_TIMESTAMP)
       AND d."latitude" IS NOT NULL
       AND d."longitude" IS NOT NULL
       AND d."latitude" BETWEEN ${Math.max(-90, input.latitude - 5 / 110.574)}

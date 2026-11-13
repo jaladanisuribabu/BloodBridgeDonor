@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 
 const locationSchema = z.object({
   address: z.string().trim().min(5).max(300),
+  city: z.string().trim().min(2).max(120),
   latitude: z.number().finite().min(-90).max(90),
   longitude: z.number().finite().min(-180).max(180),
 });
@@ -31,8 +32,11 @@ export async function PUT(request: NextRequest) {
       name: true,
       email: true,
       address: true,
+      city: true,
+      phone: true,
       latitude: true,
       longitude: true,
+      donationIntervalMonths: true,
     },
   });
 

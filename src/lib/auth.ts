@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { db } from "@/lib/db";
 
 const COOKIE_NAME = "hospital-session";
+const PATIENT_COOKIE_NAME = "patient-session";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 
 function sessionKey(): Uint8Array {
@@ -35,6 +36,50 @@ export async function createHospitalSession(hospitalId: string): Promise<void> {
 export async function clearHospitalSession(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
+}
+
+export async function createPatientSession(patientId: string): Promise<void> {
+  const token = await new SignJWT({ role: "patient" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(patientId)
+    .setIssuedAt()
+    .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
+    .sign(sessionKey());
+
+  const cookieStore = await cookies();
+  cookieStore.set(PATIENT_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_TTL_SECONDS,
+  });
+}
+
+export async function clearPatientSession(): Promise<void> {
+  (await cookies()).delete(PATIENT_COOKIE_NAME);
+}
+
+export async function currentPatientId(): Promise<string | null> {
+  const token = (await cookies()).get(PATIENT_COOKIE_NAME)?.value;
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, sessionKey());
+    return payload.role === "patient" && typeof payload.sub === "string"
+      ? payload.sub
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function patientForRequest() {
+  const patientId = await currentPatientId();
+  if (!patientId) return null;
+  return db.patientAccount.findUnique({
+    where: { id: patientId },
+    select: { id: true, name: true, email: true, city: true },
+  });
 }
 
 export async function currentHospitalId(): Promise<string | null> {
@@ -74,8 +119,11 @@ export async function hospitalForRequest() {
       name: true,
       email: true,
       address: true,
+      city: true,
+      phone: true,
       latitude: true,
       longitude: true,
+      donationIntervalMonths: true,
     },
   });
 }

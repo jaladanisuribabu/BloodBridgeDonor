@@ -44,6 +44,10 @@ export async function GET() {
         trackingConsent: true,
         latitude: { not: null },
         longitude: { not: null },
+        OR: [
+          { nextEligibleAt: null },
+          { nextEligibleAt: { lte: new Date() } },
+        ],
       },
     }),
     db.donor.groupBy({

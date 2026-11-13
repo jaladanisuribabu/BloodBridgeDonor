@@ -14,7 +14,7 @@ export async function GET() {
   const hospital = await hospitalForRequest();
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
-  const [inventory, usage] = await Promise.all([
+  const [inventory, usage, changes] = await Promise.all([
     db.bloodInventory.findMany({ where: { hospitalId: hospital.id } }),
     db.emergencyRequest.groupBy({
       by: ["bloodGroup"],
@@ -24,6 +24,12 @@ export async function GET() {
         createdAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
       },
       _sum: { unitsRequired: true },
+    }),
+    db.inventoryChange.findMany({
+      where: { hospitalId: hospital.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: { patientCase: { select: { patientName: true } } },
     }),
   ]);
   const availableByGroup = new Map(
@@ -47,7 +53,7 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ forecasts });
+  return NextResponse.json({ forecasts, changes });
 }
 
 export async function PUT(request: NextRequest) {
@@ -59,15 +65,34 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Invalid blood inventory values." }, { status: 400 });
   }
 
-  const inventory = await db.bloodInventory.upsert({
-    where: {
+  const inventory = await db.$transaction(async (tx) => {
+    const where = {
       hospitalId_bloodGroup: {
         hospitalId: hospital.id,
         bloodGroup: parsed.data.bloodGroup,
       },
-    },
-    create: { hospitalId: hospital.id, ...parsed.data },
-    update: { unitsAvailable: parsed.data.unitsAvailable },
+    };
+    const previous = await tx.bloodInventory.findUnique({
+      where,
+      select: { unitsAvailable: true },
+    });
+    const updated = await tx.bloodInventory.upsert({
+      where,
+      create: { hospitalId: hospital.id, ...parsed.data },
+      update: { unitsAvailable: parsed.data.unitsAvailable },
+    });
+    const delta = parsed.data.unitsAvailable - (previous?.unitsAvailable ?? 0);
+    if (delta !== 0) {
+      await tx.inventoryChange.create({
+        data: {
+          hospitalId: hospital.id,
+          bloodGroup: parsed.data.bloodGroup,
+          unitsDelta: delta,
+          reason: "STAFF_STOCK_UPDATE",
+        },
+      });
+    }
+    return updated;
   });
   return NextResponse.json({ inventory });
 }

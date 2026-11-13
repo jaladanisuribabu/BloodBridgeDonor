@@ -47,10 +47,12 @@ model Donor {
   locationTokenHash  String          @unique
   latitude           Float?
   longitude          Float?
+  nextEligibleAt     DateTime?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   callLogs           CallLog[]
   locationTracking   LocationTracking[]
+  donations          DonorDonation[]
 
   @@index([bloodGroup, available, trackingConsent])
 }
@@ -59,14 +61,76 @@ model Hospital {
   id             String            @id @default(cuid())
   name           String
   address        String?
+  city           String?
+  phone          String?
   email          String            @unique
   passwordHash   String
   latitude       Float?
   longitude      Float?
+  donationIntervalMonths Int?
   createdAt      DateTime          @default(now())
   requests       EmergencyRequest[]
   inventory      BloodInventory[]
   passwordResets HospitalPasswordReset[]
+  patientCases   PatientCase[]
+  donations      DonorDonation[]
+  inventoryChanges InventoryChange[]
+}
+
+model PatientAccount {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  city         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model PatientCase {
+  id            String   @id @default(cuid())
+  hospitalId    String
+  patientName   String
+  patientReference String?
+  bloodGroup    BloodGroup
+  unitsRequired Int
+  unitsIssued   Int      @default(0)
+  status        String   @default("OPEN")
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  hospital      Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  inventoryChanges InventoryChange[]
+
+  @@index([hospitalId, status, createdAt])
+}
+
+model InventoryChange {
+  id            String      @id @default(cuid())
+  hospitalId    String
+  bloodGroup    BloodGroup
+  unitsDelta    Int
+  reason        String
+  patientCaseId String?
+  createdAt     DateTime    @default(now())
+  hospital      Hospital    @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  patientCase   PatientCase? @relation(fields: [patientCaseId], references: [id], onDelete: SetNull)
+
+  @@index([hospitalId, createdAt])
+}
+
+model DonorDonation {
+  id          String   @id @default(cuid())
+  donorId     String
+  hospitalId  String
+  donatedAt   DateTime
+  nextEligibleAt DateTime?
+  createdAt   DateTime @default(now())
+  donor       Donor    @relation(fields: [donorId], references: [id], onDelete: Cascade)
+  hospital    Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  @@index([donorId, donatedAt])
+  @@index([hospitalId, donatedAt])
 }
 
 model HospitalPasswordReset {
