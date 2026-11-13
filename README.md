@@ -76,6 +76,7 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | POST | `/api/hospital/login` | Create hospital session |
 | GET | `/api/hospital/google/start` | Start Google OpenID Connect sign-in |
 | GET | `/api/hospital/google/callback` | Verify Google identity and create hospital session |
+| GET | `/api/hospital/google/status` | Report whether Google sign-in is configured, without exposing credentials |
 | POST | `/api/hospital/password-reset/request` | Request a one-time reset link by email |
 | POST | `/api/hospital/password-reset/confirm` | Set a new password with a valid reset token |
 | POST | `/api/hospital/logout` | Clear session |
