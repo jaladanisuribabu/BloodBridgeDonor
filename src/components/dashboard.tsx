@@ -58,6 +58,7 @@ export default function Dashboard() {
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState<"password" | "email" | null>(
     null,
   );
@@ -111,6 +112,19 @@ export default function Dashboard() {
       active = false;
     };
   }, [refresh]);
+
+  useEffect(() => {
+    const error = new URLSearchParams(window.location.search).get("google_error");
+    const messages: Record<string, string> = {
+      not_configured: "Google sign-in is not configured yet. Use your hospital email and password.",
+      account: "No hospital account is registered with that Google email. Use the account email registered by your hospital.",
+      failed: "Google sign-in could not be completed. Please try again or use your hospital password.",
+    };
+    if (error && messages[error]) {
+      setMessage(messages[error]);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     if (!hospital) return;
@@ -252,19 +266,41 @@ export default function Dashboard() {
             </label>
             <label>
               Password
-              <input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
+              <span className="password-input">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="password-toggle"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((visible) => !visible)}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </span>
             </label>
             {message && <p className="notice error">{message}</p>}
             <button disabled={busy} className="button primary">
               {busy ? "Signing in..." : "Sign in"}
             </button>
           </form>
+          <div className="login-divider"><span>or</span></div>
+          <a className="google-sign-in" href="/api/hospital/google/start">
+            <svg aria-hidden="true" viewBox="0 0 48 48">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" transform="translate(0 5)" />
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94a11.05 11.05 0 0 1-4.8 7.24l7.75 6C44.4 38.02 46.98 31.9 46.98 24.55Z" />
+              <path fill="#FBBC05" d="M10.53 28.59a14.4 14.4 0 0 1 0-9.18l-7.98-6.19a23.9 23.9 0 0 0 0 21.56l7.98-6.19Z" transform="translate(0 5)" />
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.9-5.8l-7.75-6c-2.15 1.45-4.9 2.3-8.15 2.3-6.26 0-11.57-4.22-13.46-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48Z" transform="translate(0 -5)" />
+            </svg>
+            Continue with Google
+          </a>
+          <p className="google-note">Use the Google account matching your hospital account email.</p>
           <div className="recovery-links">
             <button
               type="button"

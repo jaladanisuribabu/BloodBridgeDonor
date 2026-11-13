@@ -24,6 +24,15 @@ h1, h2, p { margin-top: 0; }
 h1, h2, strong { font-family: "Manrope", sans-serif; }
 .login-card h1 { font-size: 30px; margin: 4px 0 8px; }
 .login-card > .muted { margin-bottom: 30px; }
+.password-input { position: relative; display: flex; }
+.password-input input { width: 100%; padding-right: 58px; }
+.password-toggle { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); border: 0; padding: 4px; background: transparent; color: var(--red-dark); font-size: 12px; font-weight: 700; }
+.login-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; }
+.login-divider::before, .login-divider::after { height: 1px; flex: 1; background: var(--line); content: ""; }
+.google-sign-in { display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 10px; border: 1px solid #dfe5e7; border-radius: 8px; background: white; color: #29343a; font-size: 13px; font-weight: 700; text-decoration: none; }
+.google-sign-in:hover { background: #f8fafb; border-color: #c9d1d5; }
+.google-sign-in svg { width: 18px; height: 18px; }
+.google-note { margin: 9px 0 0; color: var(--muted); text-align: center; font-size: 11px; }
 .eyebrow { color: var(--red); font-size: 10px; font-weight: 700; letter-spacing: 1.5px; margin: 0 0 8px; }
 .muted, .helper-text, .fine-print { color: var(--muted); line-height: 1.55; }
 .stack-form, .request-form { display: grid; gap: 16px; }

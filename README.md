@@ -12,6 +12,7 @@ BloodBridge is a hospital-facing web application for emergency blood requests, n
 - **Matching:** exact blood-group match; consented, available donors within 5 km, sorted by Haversine distance. A database row lock prevents one donor being reserved concurrently by two requests.
 - **Voice:** Twilio Programmable Voice, with signed webhooks and DTMF response handling.
 - **Hospital access:** password hashes using bcrypt and an HTTP-only, signed hospital session cookie. Hospital tracking APIs require that session and scope requests to its hospital.
+- **Google sign-in:** Google OpenID Connect with state, nonce, and PKCE; only verified Google emails matching an existing hospital account are accepted.
 - **Account recovery:** single-use, 30-minute password-reset links delivered by Resend. Reset requests are rate-limited and return a generic message that does not reveal whether an email is registered. Forgotten hospital email recovery is administrator-assisted.
 - **Location:** donors post coordinates with a one-time generated bearer token after accepting. Tracking is opt-in and can be revoked.
 - **ETA:** displayed as a rough straight-line distance estimate at 25 km/h plus five minutes. It is not road-route guidance.
@@ -73,6 +74,8 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | Method | Route | Purpose |
 |---|---|---|
 | POST | `/api/hospital/login` | Create hospital session |
+| GET | `/api/hospital/google/start` | Start Google OpenID Connect sign-in |
+| GET | `/api/hospital/google/callback` | Verify Google identity and create hospital session |
 | POST | `/api/hospital/password-reset/request` | Request a one-time reset link by email |
 | POST | `/api/hospital/password-reset/confirm` | Set a new password with a valid reset token |
 | POST | `/api/hospital/logout` | Clear session |
@@ -99,6 +102,10 @@ Without Twilio credentials, emergency requests are saved but calls cannot start;
 Configure `RESEND_API_KEY` and `PASSWORD_RESET_FROM` in the deployment environment. The sender must be verified with Resend. Reset requests are delivered to the account email and use a single-use token that expires after 30 minutes. The API returns the same success message whether or not an account exists, and applies per-email and per-IP request limits. Run the new Prisma migration before deploying these routes.
 
 Forgotten account emails are not disclosed by the sign-in page. The hospital user must contact their hospital administrator or IT team through an official channel to verify identity and recover or update the registered email.
+
+## Google hospital sign-in
+
+Create a Google OAuth client for a web application and add the exact authorized redirect URI `https://YOUR_PRODUCTION_DOMAIN/api/hospital/google/callback` (locally: `http://localhost:3000/api/hospital/google/callback`). Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as server-side deployment secrets and redeploy. Google sign-in does not create hospital accounts: the Google account must have a verified email matching an existing hospital login email. The OAuth flow uses state, nonce, and PKCE; credentials are never sent to the browser.
 
 ## GitHub and deployment
 
