@@ -56,16 +56,33 @@ model Donor {
 }
 
 model Hospital {
-  id           String            @id @default(cuid())
-  name         String
-  address      String
-  email        String            @unique
-  passwordHash String
-  latitude     Float
-  longitude    Float
-  createdAt    DateTime          @default(now())
-  requests     EmergencyRequest[]
-  inventory    BloodInventory[]
+  id             String            @id @default(cuid())
+  name           String
+  address        String
+  email          String            @unique
+  passwordHash   String
+  latitude       Float
+  longitude      Float
+  createdAt      DateTime          @default(now())
+  requests       EmergencyRequest[]
+  inventory      BloodInventory[]
+  passwordResets HospitalPasswordReset[]
+}
+
+model HospitalPasswordReset {
+  id         String    @id @default(cuid())
+  hospitalId String?
+  emailHash  String
+  ipHash     String
+  tokenHash  String?   @unique
+  expiresAt  DateTime?
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  @@index([emailHash, createdAt])
+  @@index([ipHash, createdAt])
+  @@index([createdAt])
 }
 
 model BloodInventory {

@@ -12,6 +12,7 @@ BloodBridge is a hospital-facing web application for emergency blood requests, n
 - **Matching:** exact blood-group match; consented, available donors within 5 km, sorted by Haversine distance. A database row lock prevents one donor being reserved concurrently by two requests.
 - **Voice:** Twilio Programmable Voice, with signed webhooks and DTMF response handling.
 - **Hospital access:** password hashes using bcrypt and an HTTP-only, signed hospital session cookie. Hospital tracking APIs require that session and scope requests to its hospital.
+- **Account recovery:** single-use, 30-minute password-reset links delivered by Resend. Reset requests are rate-limited and return a generic message that does not reveal whether an email is registered. Forgotten hospital email recovery is administrator-assisted.
 - **Location:** donors post coordinates with a one-time generated bearer token after accepting. Tracking is opt-in and can be revoked.
 - **ETA:** displayed as a rough straight-line distance estimate at 25 km/h plus five minutes. It is not road-route guidance.
 - **Shortage forecast:** 90-day request history divided into an average daily demand, projected over seven days and compared with manually maintained stock. This is a transparent baseline, not a trained machine-learning model.
@@ -72,6 +73,8 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | Method | Route | Purpose |
 |---|---|---|
 | POST | `/api/hospital/login` | Create hospital session |
+| POST | `/api/hospital/password-reset/request` | Request a one-time reset link by email |
+| POST | `/api/hospital/password-reset/confirm` | Set a new password with a valid reset token |
 | POST | `/api/hospital/logout` | Clear session |
 | GET | `/api/hospital/me` | Current hospital account and matching coordinates |
 | GET / POST | `/api/hospital/requests` | List requests / create emergency and start calls |
@@ -90,6 +93,12 @@ Emergency request input is `{ "bloodGroup": "O_NEGATIVE", "unitsRequired": 2 }`.
 Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and the externally accessible HTTPS `APP_URL`. Outbound calls use the app's signed IVR and status callback URLs. Twilio credentials must remain server-side. Local calls require a secure tunnel and a matching public `APP_URL`.
 
 Without Twilio credentials, emergency requests are saved but calls cannot start; configure Twilio before using request creation.
+
+## Hospital account recovery
+
+Configure `RESEND_API_KEY` and `PASSWORD_RESET_FROM` in the deployment environment. The sender must be verified with Resend. Reset requests are delivered to the account email and use a single-use token that expires after 30 minutes. The API returns the same success message whether or not an account exists, and applies per-email and per-IP request limits. Run the new Prisma migration before deploying these routes.
+
+Forgotten account emails are not disclosed by the sign-in page. The hospital user must contact their hospital administrator or IT team through an official channel to verify identity and recover or update the registered email.
 
 ## GitHub and deployment
 

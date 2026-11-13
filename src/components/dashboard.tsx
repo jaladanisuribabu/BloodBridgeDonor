@@ -58,6 +58,12 @@ export default function Dashboard() {
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState<"password" | "email" | null>(
+    null,
+  );
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const [recoveryError, setRecoveryError] = useState(false);
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>("O_NEGATIVE");
   const [unitsRequired, setUnitsRequired] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -135,6 +141,34 @@ export default function Dashboard() {
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Sign-in failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setRecoveryError(false);
+    setRecoveryMessage("");
+    try {
+      const response = await fetch("/api/hospital/password-reset/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: recoveryEmail }),
+      });
+      const data = (await response.json()) as { message?: string; error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not request a password reset.");
+      }
+      setRecoveryMessage(data.message ?? "If an account exists, reset instructions will be sent.");
+    } catch (error) {
+      setRecoveryError(true);
+      setRecoveryMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not request a password reset.",
+      );
     } finally {
       setBusy(false);
     }
@@ -231,6 +265,70 @@ export default function Dashboard() {
               {busy ? "Signing in..." : "Sign in"}
             </button>
           </form>
+          <div className="recovery-links">
+            <button
+              type="button"
+              onClick={() => {
+                setRecoveryMode(recoveryMode === "password" ? null : "password");
+                setRecoveryEmail(email);
+                setRecoveryMessage("");
+              }}
+            >
+              Forgot password?
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRecoveryMode(recoveryMode === "email" ? null : "email");
+                setRecoveryMessage("");
+              }}
+            >
+              Forgot email?
+            </button>
+          </div>
+          {recoveryMode === "password" && (
+            <form
+              onSubmit={requestPasswordReset}
+              className="recovery-panel stack-form"
+            >
+              <p className="helper-text">
+                Enter your hospital account email. If an account exists, we’ll
+                send a one-time reset link.
+              </p>
+              <label>
+                Hospital email
+                <input
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={recoveryEmail}
+                  onChange={(event) => setRecoveryEmail(event.target.value)}
+                />
+              </label>
+              {recoveryMessage && (
+                <p
+                  className={`notice${recoveryError ? " error" : ""}`}
+                  role="status"
+                >
+                  {recoveryMessage}
+                </p>
+              )}
+              <button disabled={busy} className="button primary">
+                {busy ? "Sending..." : "Send reset link"}
+              </button>
+            </form>
+          )}
+          {recoveryMode === "email" && (
+            <div className="recovery-panel" role="status">
+              <strong>Can’t remember your hospital email?</strong>
+              <p className="helper-text">
+                For privacy, BloodBridge can’t look up or display account emails
+                here. Contact your hospital’s administrator or IT team through
+                its official channel to verify your identity and recover or
+                update the account email.
+              </p>
+            </div>
+          )}
           <p className="fine-print">Hospital accounts only. Donor tracking is never shown to public users.</p>
         </section>
       </main>

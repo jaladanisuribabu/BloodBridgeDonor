@@ -39,6 +39,13 @@ input:focus, select:focus { border-color: #db7b84; box-shadow: 0 0 0 3px #c83a47
 .fine-print { font-size: 11px; margin: 18px 0 0; }
 .notice { border-radius: 8px; padding: 11px 14px; background: #eff8f4; color: #28735c; font-size: 13px; }
 .notice.error { background: var(--red-soft); color: var(--red-dark); }
+.recovery-links { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.recovery-links button { border: 0; padding: 0; color: var(--red-dark); background: transparent; font-size: 12px; font-weight: 700; }
+.recovery-panel { margin-top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fcfcfc; }
+.recovery-panel .helper-text { margin: 0; font-size: 12px; }
+.recovery-panel strong { display: block; margin-bottom: 8px; font-size: 13px; }
+.recovery-panel .notice { margin: 0; }
+.login-card a { color: var(--red-dark); font-weight: 700; }
 .app-shell { min-height: 100vh; }
 .topbar { height: 70px; padding: 0 max(calc((100vw - 1200px) / 2), 28px); display: flex; align-items: center; justify-content: space-between; background: white; border-bottom: 1px solid var(--line); }
 .brand { display: flex; gap: 10px; align-items: center; color: var(--ink); font: 800 16px "Manrope", sans-serif; text-decoration: none; }
