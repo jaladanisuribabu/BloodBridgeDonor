@@ -14,14 +14,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Choose a valid city and blood group." }, { status: 400 });
   }
 
-  const rows = await db.bloodInventory.groupBy({
+  const rows = await db.bloodUnit.groupBy({
     by: ["bloodGroup"],
     where: {
-      unitsAvailable: { gt: 0 },
+      status: "AVAILABLE",
+      expiresAt: { gt: new Date() },
+      verifiedAt: { not: null },
       hospital: { city: { equals: city, mode: "insensitive" } },
       ...(bloodGroup?.success ? { bloodGroup: bloodGroup.data } : {}),
     },
-    _sum: { unitsAvailable: true },
+    _count: { _all: true },
     orderBy: { bloodGroup: "asc" },
   });
 
@@ -29,7 +31,7 @@ export async function GET(request: NextRequest) {
     city,
     availability: rows.map((row) => ({
       bloodGroup: row.bloodGroup,
-      unitsAvailable: row._sum.unitsAvailable ?? 0,
+      unitsAvailable: row._count._all,
     })),
   });
 }

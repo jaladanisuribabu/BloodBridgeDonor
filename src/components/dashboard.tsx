@@ -58,11 +58,21 @@ type EmergencyRequest = {
 };
 type Forecast = {
   bloodGroup: BloodGroup;
-  unitsAvailable: number;
+  reportedUnits: number;
+  trackedUnits: number;
+  unverifiedUnits: number;
+  verifiedUsableUnits: number;
+  pendingTestingUnits: number;
+  reservedUnits: number;
+  expiredUnits: number;
+  quarantinedUnits: number;
   historicalUnits90Days: number;
   projectedSevenDayDemand: number;
   projectedShortage: number;
-  confidence: "low" | "moderate";
+  expiryRiskUnits: number;
+  confidenceScore: number;
+  confidence: "low" | "moderate" | "high";
+  anomalies: { kind: string; message: string; createdAt?: string }[];
 };
 type InventoryChange = {
   id: string;
@@ -77,16 +87,37 @@ type DonorNetwork = {
   callable: number;
   groups: { bloodGroup: BloodGroup; count: number }[];
 };
-type PatientCase = {
+type StaffDonor = {
   id: string;
-  patientName: string;
-  patientReference: string | null;
+  name: string;
+  phone: string;
+  address: string | null;
   bloodGroup: BloodGroup;
-  unitsRequired: number;
-  unitsIssued: number;
-  status: string;
-  notes: string | null;
+  available: boolean;
+  callConsent: boolean;
+  trackingConsent: boolean;
+  hasLocation: boolean;
+  nextEligibleAt: string | null;
   createdAt: string;
+};
+type BloodUnitStatus =
+  | "PENDING_TESTING"
+  | "AVAILABLE"
+  | "RESERVED"
+  | "ISSUED"
+  | "QUARANTINED";
+type BloodUnit = {
+  id: string;
+  unitCode: string;
+  bloodGroup: BloodGroup;
+  collectedAt: string;
+  expiresAt: string;
+  status: BloodUnitStatus;
+  verifiedAt: string | null;
+  reservationReference: string | null;
+  quarantineReason: string | null;
+  updatedAt: string;
+  donor: { name: string } | null;
 };
 type DonationRecord = {
   id: string;
@@ -107,8 +138,8 @@ type HospitalContact = {
   phone: string | null;
   inventory: {
     bloodGroup: BloodGroup;
-    unitsAvailable: number;
-    updatedAt: string;
+    verifiedUsableUnits: number;
+    updatedAt: string | null;
   }[];
 };
 type DashboardSection =
@@ -119,7 +150,7 @@ type DashboardSection =
   | "hospital-network"
   | "members"
   | "requests"
-  | "patients"
+  | "donors"
   | "donations"
   | "settings";
 
@@ -157,8 +188,30 @@ export default function Dashboard() {
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
   const [inventoryChanges, setInventoryChanges] = useState<InventoryChange[]>([]);
   const [donorNetwork, setDonorNetwork] = useState<DonorNetwork | null>(null);
-  const [patientCases, setPatientCases] = useState<PatientCase[]>([]);
   const [hospitalDonors, setHospitalDonors] = useState<HospitalDonor[]>([]);
+  const [donorRecords, setDonorRecords] = useState<StaffDonor[]>([]);
+  const [donorName, setDonorName] = useState("");
+  const [donorPhone, setDonorPhone] = useState("");
+  const [donorAddress, setDonorAddress] = useState("");
+  const [donorBloodGroup, setDonorBloodGroup] = useState<BloodGroup>("O_POSITIVE");
+  const [donorCallConsent, setDonorCallConsent] = useState(false);
+  const [donorTrackingConsent, setDonorTrackingConsent] = useState(false);
+  const [donorLatitude, setDonorLatitude] = useState("");
+  const [donorLongitude, setDonorLongitude] = useState("");
+  const [donorLocationBusy, setDonorLocationBusy] = useState(false);
+  const [donorLocationError, setDonorLocationError] = useState("");
+  const [donorRecordBusy, setDonorRecordBusy] = useState(false);
+  const [donorRecordMessage, setDonorRecordMessage] = useState("");
+  const [donorRecordError, setDonorRecordError] = useState(false);
+  const [donorActivationToken, setDonorActivationToken] = useState("");
+  const [bloodUnits, setBloodUnits] = useState<BloodUnit[]>([]);
+  const [unitBloodGroup, setUnitBloodGroup] = useState<BloodGroup>("O_POSITIVE");
+  const [unitCode, setUnitCode] = useState("");
+  const [unitDonorId, setUnitDonorId] = useState("");
+  const [unitCollectedAt, setUnitCollectedAt] = useState("");
+  const [unitExpiresAt, setUnitExpiresAt] = useState("");
+  const [unitIncrementReported, setUnitIncrementReported] = useState(true);
+  const [unitRecordBusy, setUnitRecordBusy] = useState(false);
   const [donationRecords, setDonationRecords] = useState<DonationRecord[]>([]);
   const [hospitalNetwork, setHospitalNetwork] = useState<HospitalContact[]>([]);
   const [hospitalNetworkLoading, setHospitalNetworkLoading] = useState(false);
@@ -198,11 +251,6 @@ export default function Dashboard() {
   const [recoveryError, setRecoveryError] = useState(false);
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>("O_NEGATIVE");
   const [unitsRequired, setUnitsRequired] = useState(1);
-  const [caseName, setCaseName] = useState("");
-  const [caseReference, setCaseReference] = useState("");
-  const [caseBloodGroup, setCaseBloodGroup] = useState<BloodGroup>("O_NEGATIVE");
-  const [caseUnits, setCaseUnits] = useState(1);
-  const [caseNotes, setCaseNotes] = useState("");
   const [donationDonorId, setDonationDonorId] = useState("");
   const [donationDateTime, setDonationDateTime] = useState("");
   const [donorImportRows, setDonorImportRows] = useState<DonorImportRow[]>([]);
@@ -242,11 +290,11 @@ export default function Dashboard() {
   }, []);
 
   const refreshStaffRecords = useCallback(async (section: DashboardSection) => {
-    if (section === "patients") {
-      const response = await fetch("/api/hospital/cases", { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not load patient case records.");
-      const data = (await response.json()) as { cases: PatientCase[] };
-      setPatientCases(data.cases);
+    if (section === "donors") {
+      const response = await fetch("/api/hospital/donor-records", { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load staff donor records.");
+      const data = (await response.json()) as { donors: StaffDonor[] };
+      setDonorRecords(data.donors);
     }
     if (section === "donations") {
       const response = await fetch("/api/hospital/donations", { cache: "no-store" });
@@ -260,6 +308,19 @@ export default function Dashboard() {
       if (!donationDonorId && data.donors[0]) setDonationDonorId(data.donors[0].id);
     }
   }, [donationDonorId]);
+
+  const refreshBloodUnits = useCallback(async () => {
+    const response = await fetch("/api/hospital/inventory/units", {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(
+        await responseError(response, "Could not load unit-level inventory."),
+      );
+    }
+    const data = (await response.json()) as { units: BloodUnit[] };
+    setBloodUnits(data.units);
+  }, []);
 
   const refreshHospitalNetwork = useCallback(async () => {
     setHospitalNetworkLoading(true);
@@ -283,11 +344,24 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!hospital || (activeSection !== "patients" && activeSection !== "donations")) return;
+    if (!hospital || (activeSection !== "donors" && activeSection !== "donations")) return;
     void refreshStaffRecords(activeSection).catch((error: unknown) => {
       setMessage(requestError(error, "Could not load staff records."));
     });
   }, [hospital, activeSection, refreshStaffRecords]);
+
+  useEffect(() => {
+    if (!hospital || activeSection !== "inventory") return;
+    void refreshBloodUnits().catch((error: unknown) => {
+      setMessage(requestError(error, "Could not load unit-level inventory."));
+    });
+    const timer = window.setInterval(() => {
+      void refreshBloodUnits().catch((error: unknown) => {
+        setMessage(requestError(error, "Could not refresh unit-level inventory."));
+      });
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [hospital, activeSection, refreshBloodUnits]);
 
   useEffect(() => {
     if (!hospital || activeSection !== "hospital-network") return;
@@ -573,6 +647,182 @@ export default function Dashboard() {
     }
   }
 
+  function captureDonorLocation() {
+    setDonorLocationError("");
+    if (!donorTrackingConsent) {
+      setDonorLocationError("Get the donor's explicit location-sharing consent first.");
+      return;
+    }
+    if (!navigator.geolocation) {
+      setDonorLocationError("Location access is not available in this browser.");
+      return;
+    }
+    setDonorLocationBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setDonorLatitude(position.coords.latitude.toString());
+        setDonorLongitude(position.coords.longitude.toString());
+        setDonorLocationBusy(false);
+      },
+      (error) => {
+        setDonorLocationError(
+          error.code === error.PERMISSION_DENIED
+            ? "Allow location access after confirming the donor's consent."
+            : "Could not determine the donor's location. Check location services and try again.",
+        );
+        setDonorLocationBusy(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
+  }
+
+  async function createDonorRecord(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setDonorRecordBusy(true);
+    setDonorRecordError(false);
+    setDonorRecordMessage("");
+    setDonorActivationToken("");
+    const compactPhone = donorPhone.trim().replace(/[\s()-]/g, "");
+    const normalizedPhone = /^\d{10}$/.test(compactPhone)
+      ? `+91${compactPhone}`
+      : compactPhone;
+    try {
+      const response = await fetch("/api/hospital/donor-records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: donorName,
+          phone: normalizedPhone,
+          address: donorAddress,
+          bloodGroup: donorBloodGroup,
+          callConsent: donorCallConsent,
+          trackingConsent: donorTrackingConsent,
+          latitude: donorLatitude ? Number(donorLatitude) : null,
+          longitude: donorLongitude ? Number(donorLongitude) : null,
+        }),
+      });
+      const data = (await response.json()) as {
+        donor?: StaffDonor;
+        activationToken?: string | null;
+        error?: string;
+      };
+      if (!response.ok || !data.donor) {
+        throw new Error(data.error ?? "Could not save this donor record.");
+      }
+      const createdDonor = data.donor;
+      setDonorRecords((records) => [createdDonor, ...records]);
+      setDonorName("");
+      setDonorPhone("");
+      setDonorAddress("");
+      setDonorLatitude("");
+      setDonorLongitude("");
+      setDonorCallConsent(false);
+      setDonorTrackingConsent(false);
+      setDonorActivationToken(data.activationToken ?? "");
+      setDonorRecordMessage(
+        createdDonor.hasLocation && createdDonor.callConsent
+          ? "Donor record saved. The donor can be considered for emergency matching."
+          : "Donor record saved. It will not be eligible for proximity calls until the required consent and exact location are recorded.",
+      );
+    } catch (error) {
+      setDonorRecordError(true);
+      setDonorRecordMessage(requestError(error, "Could not save this donor record."));
+    } finally {
+      setDonorRecordBusy(false);
+    }
+  }
+
+  async function createBloodUnit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setUnitRecordBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/hospital/inventory/units", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bloodGroup: unitBloodGroup,
+          unitCode: unitCode.trim() || undefined,
+          donorId: unitDonorId || null,
+          collectedAt: new Date(unitCollectedAt).toISOString(),
+          expiresAt: new Date(unitExpiresAt).toISOString(),
+          incrementReported: unitIncrementReported,
+        }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not register this blood unit.");
+      }
+      setUnitCode("");
+      setUnitDonorId("");
+      setUnitCollectedAt("");
+      setUnitExpiresAt("");
+      setMessage("Unit recorded as pending testing. It is not counted as usable until released.");
+      await Promise.all([refresh(), refreshBloodUnits()]);
+    } catch (error) {
+      setMessage(requestError(error, "Could not register this blood unit."));
+    } finally {
+      setUnitRecordBusy(false);
+    }
+  }
+
+  async function updateBloodUnit(unit: BloodUnit, status: BloodUnitStatus) {
+    let reason = "";
+    let reservationReference: string | null = null;
+    let verificationConfirmed = false;
+    if (status === "AVAILABLE") {
+      if (
+        unit.status !== "RESERVED" &&
+        !window.confirm(
+          "Confirm required testing is complete and qualified staff have released this unit for clinical use.",
+        )
+      ) return;
+      reason = unit.status === "RESERVED"
+        ? "Reservation released by authorized staff."
+        : "Testing completed and released by authorized staff.";
+      verificationConfirmed = unit.status !== "RESERVED";
+    } else if (status === "RESERVED") {
+      reservationReference = window.prompt(
+        "Enter a non-identifying reservation reference. Do not enter patient names or diagnoses.",
+      )?.trim() ?? "";
+      if (!reservationReference) return;
+      reason = "Reserved for a hospital case.";
+    } else if (status === "ISSUED") {
+      if (!window.confirm("Confirm this verified unit has been issued to the patient.")) return;
+      reason = "Issued to a hospital patient.";
+    } else if (status === "QUARANTINED") {
+      reason = window.prompt("Enter the non-sensitive reason for quarantine.")?.trim() ?? "";
+      if (reason.length < 3) return;
+    } else {
+      reason = "Returned to testing for staff review.";
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/hospital/inventory/units/${unit.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status,
+          reason,
+          reservationReference,
+          verificationConfirmed,
+        }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not update this unit.");
+      }
+      await Promise.all([refresh(), refreshBloodUnits()]);
+      setMessage(`Unit ${unit.unitCode} updated.`);
+    } catch (error) {
+      setMessage(requestError(error, "Could not update this unit."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveHospitalSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -608,56 +858,6 @@ export default function Dashboard() {
       setMessage("Hospital settings updated.");
     } catch (error) {
       setMessage(requestError(error, "Could not update hospital settings."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function createPatientCase(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/hospital/cases", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patientName: caseName,
-          patientReference: caseReference || null,
-          bloodGroup: caseBloodGroup,
-          unitsRequired: caseUnits,
-          notes: caseNotes || null,
-        }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not save patient record.");
-      setCaseName("");
-      setCaseReference("");
-      setCaseUnits(1);
-      setCaseNotes("");
-      setMessage("Private patient case saved.");
-      await refreshStaffRecords("patients");
-    } catch (error) {
-      setMessage(requestError(error, "Could not save patient record."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function updatePatientCase(patientCase: PatientCase, unitsIssued: number) {
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(`/api/hospital/cases/${patientCase.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unitsIssued }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not update issued units.");
-      await refreshStaffRecords("patients");
-    } catch (error) {
-      setMessage(requestError(error, "Could not update issued units."));
     } finally {
       setBusy(false);
     }
@@ -774,8 +974,11 @@ export default function Dashboard() {
     setRequests([]);
     setForecasts([]);
     setDonorNetwork(null);
-    setPatientCases([]);
+    setDonorRecords([]);
     setHospitalDonors([]);
+    setBloodUnits([]);
+    setDonorActivationToken("");
+    setDonorRecordMessage("");
     setDonationRecords([]);
     setActiveSection("overview");
   }
@@ -1019,7 +1222,7 @@ export default function Dashboard() {
             <button type="button" className={activeSection === "hospital-network" ? "active" : ""} onClick={() => setActiveSection("hospital-network")}><span>☎</span> Hospital network</button>
             <button type="button" className={activeSection === "members" ? "active" : ""} onClick={() => setActiveSection("members")}><span>♧</span> Donor network</button>
             <button type="button" className={activeSection === "requests" ? "active" : ""} onClick={() => setActiveSection("requests")}><span>◷</span> Recent requests</button>
-            <button type="button" className={activeSection === "patients" ? "active" : ""} onClick={() => setActiveSection("patients")}><span>▣</span> Patient records</button>
+            <button type="button" className={activeSection === "donors" ? "active" : ""} onClick={() => setActiveSection("donors")}><span>♥</span> Donor records</button>
             <button type="button" className={activeSection === "donations" ? "active" : ""} onClick={() => setActiveSection("donations")}><span>♥</span> Donation history</button>
             <button type="button" className={activeSection === "settings" ? "active" : ""} onClick={() => setActiveSection("settings")}><span>⚙</span> Settings</button>
           </nav>
@@ -1154,28 +1357,75 @@ export default function Dashboard() {
           </form>
         </section>
 
-        <section className={`panel dashboard-view${activeSection === "patients" ? "" : " section-hidden"}`}>
+        <section className={`panel dashboard-view${activeSection === "donors" ? "" : " section-hidden"}`}>
           <div className="section-heading">
-            <div><p className="eyebrow">STAFF-ONLY · CONFIDENTIAL</p><h2>Patient cases & unit issue log</h2></div>
+            <div><p className="eyebrow">STAFF-ONLY · DONOR INTAKE</p><h2>Donor records</h2></div>
           </div>
-          <p className="muted privacy-note">These records are visible only to authenticated hospital staff and are never included in patient availability searches. Record only the minimum required identifiers; do not enter diagnoses or unnecessary sensitive details.</p>
-          <form className="stack-form patient-case-form" onSubmit={(event) => void createPatientCase(event)}>
+          <p className="muted privacy-note">Add donors encountered at hospital visits or campaigns. Calls require explicit call consent, and the 5 km matching queue also requires explicit location consent and a donor-confirmed precise location. Donors without those prerequisites are stored but never called automatically.</p>
+          <form className="stack-form donor-intake-form" onSubmit={(event) => void createDonorRecord(event)}>
             <div className="location-coordinate-fields">
-              <label>Patient name<input required minLength={2} maxLength={120} value={caseName} onChange={(event) => setCaseName(event.target.value)} /></label>
-              <label>Internal reference (optional)<input maxLength={80} value={caseReference} onChange={(event) => setCaseReference(event.target.value)} /></label>
+              <label>Donor name<input required minLength={2} maxLength={120} value={donorName} onChange={(event) => setDonorName(event.target.value)} /></label>
+              <label>Mobile number<input required type="tel" maxLength={30} value={donorPhone} onChange={(event) => setDonorPhone(event.target.value)} placeholder="+91 97000 00000" /></label>
             </div>
             <div className="location-coordinate-fields">
-              <label>Blood group<select value={caseBloodGroup} onChange={(event) => setCaseBloodGroup(event.target.value as BloodGroup)}>{bloodGroups.map((group) => <option key={group} value={group}>{formatGroup(group)}</option>)}</select></label>
-              <label>Units requested<input type="number" min={1} max={1000} value={caseUnits} onChange={(event) => setCaseUnits(Number(event.target.value))} /></label>
+              <label>Blood group<select value={donorBloodGroup} onChange={(event) => setDonorBloodGroup(event.target.value as BloodGroup)}>{bloodGroups.map((group) => <option key={group} value={group}>{formatGroup(group)}</option>)}</select></label>
+              <label>Address<input required minLength={2} maxLength={300} value={donorAddress} onChange={(event) => setDonorAddress(event.target.value)} placeholder="Area, city" /></label>
             </div>
-            <label>Staff note (optional)<input maxLength={500} value={caseNotes} onChange={(event) => setCaseNotes(event.target.value)} /></label>
-            <button disabled={busy} className="button primary">{busy ? "Saving..." : "Add private patient case"}</button>
+            <div className="donor-consents">
+              <label className="consent-confirmation">
+                <input type="checkbox" checked={donorCallConsent} onChange={(event) => setDonorCallConsent(event.target.checked)} />
+                <span>Donor explicitly agreed to receive automated emergency calls.</span>
+              </label>
+              <label className="consent-confirmation">
+                <input type="checkbox" checked={donorTrackingConsent} onChange={(event) => {
+                  setDonorTrackingConsent(event.target.checked);
+                  if (!event.target.checked) {
+                    setDonorLatitude("");
+                    setDonorLongitude("");
+                  }
+                }} />
+                <span>Donor explicitly agreed to share location for emergency matching and tracking.</span>
+              </label>
+            </div>
+            <div className="donor-location-capture">
+              <button type="button" className="button subtle" disabled={!donorTrackingConsent || donorLocationBusy} onClick={captureDonorLocation}>
+                {donorLocationBusy ? "Getting location..." : "Capture donor-confirmed live location"}
+              </button>
+              <span className="helper-text">
+                {donorLatitude && donorLongitude
+                  ? `Location captured (${Number(donorLatitude).toFixed(4)}, ${Number(donorLongitude).toFixed(4)}).`
+                  : "Capture only while the donor is present and has agreed. An area name alone cannot qualify for 5 km calls."}
+              </span>
+            </div>
+            {donorLocationError && <p className="notice error" role="alert">{donorLocationError}</p>}
+            <button disabled={donorRecordBusy} className="button primary">{donorRecordBusy ? "Saving..." : "Add donor record"}</button>
           </form>
-          <div className="staff-case-list">
-            {patientCases.map((patientCase) => (
-              <PatientCaseRow key={patientCase.id} patientCase={patientCase} busy={busy} onSave={updatePatientCase} />
+          {donorActivationToken && (
+            <p className="notice donor-token-note" role="status">
+              One-time location activation token: <code>{donorActivationToken}</code>. Deliver it privately to the donor; do not share it in public or add it to source control.
+            </p>
+          )}
+          {donorRecordMessage && <p className={`notice${donorRecordError ? " error" : ""}`} role="status">{donorRecordMessage}</p>}
+          <div className="staff-donor-list">
+            {donorRecords.map((donor) => (
+              <article className="staff-donor-card" key={donor.id}>
+                <div>
+                  <strong>{donor.name}</strong>
+                  <span>{formatGroup(donor.bloodGroup)} · {donor.phone}</span>
+                  <small>{donor.address || "Address not recorded"}</small>
+                </div>
+                <div className="donor-eligibility">
+                  <span className={donor.callConsent ? "consent-yes" : "consent-no"}>
+                    Calls {donor.callConsent ? "consented" : "not consented"}
+                  </span>
+                  <span className={donor.trackingConsent && donor.hasLocation ? "consent-yes" : "consent-no"}>
+                    {donor.trackingConsent && donor.hasLocation ? "Location ready" : "Location not ready"}
+                  </span>
+                  <span>{donor.available ? "Available" : "Unavailable"}{donor.nextEligibleAt ? ` · Review ${new Date(donor.nextEligibleAt).toLocaleDateString()}` : ""}</span>
+                </div>
+              </article>
             ))}
-            {!patientCases.length && <div className="empty-state compact">No patient cases have been added to this hospital.</div>}
+            {!donorRecords.length && <div className="empty-state compact">No donors registered by this hospital yet.</div>}
           </div>
         </section>
 
@@ -1303,12 +1553,12 @@ export default function Dashboard() {
 
         <section className={`panel dashboard-view${activeSection === "inventory" ? "" : " section-hidden"}`} id="inventory">
           <div className="section-heading">
-            <div><p className="eyebrow">SHORTAGE OUTLOOK</p><h2>Seven-day blood forecast</h2></div>
+            <div><p className="eyebrow">BLOODVERIFY · STOCK CONFIDENCE</p><h2>Verified inventory & forecast</h2></div>
             <span className="helper-text">Based on the previous 90 days of requests</span>
           </div>
           <div className="table-scroll">
             <table>
-              <thead><tr><th>Blood group</th><th>On hand</th><th>7-day demand</th><th>Projection</th><th>History</th><th>Update stock</th></tr></thead>
+              <thead><tr><th>Group</th><th>Reported</th><th>Verified usable</th><th>Pending</th><th>Reserved</th><th>Expired</th><th>Quarantined</th><th>7-day demand</th><th>Shortage</th><th>Confidence</th><th>Adjust reported</th></tr></thead>
               <tbody>
                 {forecasts.map((forecast) => (
                   <InventoryRow
@@ -1320,7 +1570,71 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
-          <p className="fine-print">Planning estimate only—not a clinical prediction. Low-confidence estimates have fewer than 10 historical units.</p>
+          <p className="fine-print">Reported totals are not treated as verified stock. Only unexpired, staff-released unit records count as usable. Forecasts are planning estimates, not clinical advice; confidence reflects record reconciliation, freshness and release status.</p>
+
+          <div className="inventory-anomalies">
+            <div className="section-heading"><div><p className="eyebrow">DATA QUALITY & EXPIRY</p><h2>Verification alerts</h2></div></div>
+            {forecasts.flatMap((forecast) =>
+              forecast.anomalies.map((anomaly, index) => (
+                <article className={`inventory-alert ${anomaly.kind.toLowerCase()}`} key={`${forecast.bloodGroup}-${anomaly.kind}-${index}`}>
+                  <strong>{formatGroup(forecast.bloodGroup)} · {anomaly.kind.replaceAll("_", " ")}</strong>
+                  <span>{anomaly.message}</span>
+                  {anomaly.createdAt && <small>{new Date(anomaly.createdAt).toLocaleString()}</small>}
+                </article>
+              )),
+            )}
+            {!forecasts.some((forecast) => forecast.anomalies.length) && (
+              <div className="empty-state compact">No stock verification alerts.</div>
+            )}
+          </div>
+
+          <div className="inventory-unit-entry">
+            <div className="section-heading"><div><p className="eyebrow">STAFF UNIT INTAKE</p><h2>Register a blood unit</h2></div></div>
+            <p className="muted privacy-note">New units begin in pending testing and are excluded from usable stock. To reconcile a unit with an existing aggregate count, leave “New stock” unchecked so the reported total is not double-counted.</p>
+            <form className="stack-form unit-intake-form" onSubmit={(event) => void createBloodUnit(event)}>
+              <div className="location-coordinate-fields">
+                <label>Blood group<select required value={unitBloodGroup} onChange={(event) => { setUnitBloodGroup(event.target.value as BloodGroup); setUnitDonorId(""); }}>{bloodGroups.map((group) => <option key={group} value={group}>{formatGroup(group)}</option>)}</select></label>
+                <label>Unit / barcode ID (optional)<input maxLength={80} value={unitCode} onChange={(event) => setUnitCode(event.target.value)} placeholder="Generated if blank" /></label>
+                <label>Donor (optional)<select value={unitDonorId} onChange={(event) => setUnitDonorId(event.target.value)}><option value="">Not linked</option>{donorRecords.filter((donor) => donor.bloodGroup === unitBloodGroup).map((donor) => <option key={donor.id} value={donor.id}>{donor.name}</option>)}</select></label>
+              </div>
+              <div className="location-coordinate-fields">
+                <label>Collection date/time<input required type="datetime-local" value={unitCollectedAt} onChange={(event) => setUnitCollectedAt(event.target.value)} /></label>
+                <label>Expiry date/time<input required type="datetime-local" value={unitExpiresAt} onChange={(event) => setUnitExpiresAt(event.target.value)} /></label>
+              </div>
+              <label className="consent-confirmation">
+                <input type="checkbox" checked={unitIncrementReported} onChange={(event) => setUnitIncrementReported(event.target.checked)} />
+                <span>This is newly collected stock; increase the reported inventory by one.</span>
+              </label>
+              <button className="button primary" disabled={unitRecordBusy}>{unitRecordBusy ? "Recording unit..." : "Record pending unit"}</button>
+            </form>
+          </div>
+
+          <div className="inventory-unit-list">
+            <div className="section-heading"><div><p className="eyebrow">UNIT-LEVEL LEDGER</p><h2>Tracked blood units</h2></div><span className="helper-text">Up to 300 non-issued units</span></div>
+            {bloodUnits.map((unit) => {
+              const isExpired = new Date(unit.expiresAt).getTime() <= Date.now();
+              return (
+                <article className="inventory-unit-card" key={unit.id}>
+                  <div className="inventory-unit-summary">
+                    <strong>{formatGroup(unit.bloodGroup)} · {unit.unitCode}</strong>
+                    <span>{unit.donor ? `Donor: ${unit.donor.name} · ` : ""}{formatStatus(unit.status)}{isExpired ? " · expired" : ""}</span>
+                    <small>Expires {new Date(unit.expiresAt).toLocaleString()}{unit.reservationReference ? ` · Reservation ${unit.reservationReference}` : ""}{unit.quarantineReason ? ` · ${unit.quarantineReason}` : ""}</small>
+                  </div>
+                  <div className="inventory-unit-actions">
+                    {unit.status === "PENDING_TESTING" && !isExpired && <button className="button small-button" disabled={busy} onClick={() => void updateBloodUnit(unit, "AVAILABLE")}>Release usable</button>}
+                    {unit.status === "AVAILABLE" && !isExpired && <button className="button small-button" disabled={busy} onClick={() => void updateBloodUnit(unit, "RESERVED")}>Reserve</button>}
+                    {(unit.status === "AVAILABLE" || unit.status === "RESERVED") && !isExpired && <button className="button small-button" disabled={busy} onClick={() => void updateBloodUnit(unit, "ISSUED")}>Issue unit</button>}
+                    {unit.status === "RESERVED" && !isExpired && <button className="button small-button" disabled={busy} onClick={() => void updateBloodUnit(unit, "AVAILABLE")}>Release reservation</button>}
+                    {unit.status === "QUARANTINED" && !isExpired && <button className="button small-button" disabled={busy} onClick={() => void updateBloodUnit(unit, "PENDING_TESTING")}>Return to testing</button>}
+                    {unit.status !== "QUARANTINED" && <button className="button small-button danger-button" disabled={busy} onClick={() => void updateBloodUnit(unit, "QUARANTINED")}>Quarantine</button>}
+                    {isExpired && <span className="helper-text">Expired units cannot be released, reserved or issued.</span>}
+                  </div>
+                </article>
+              );
+            })}
+            {!bloodUnits.length && <div className="empty-state compact">No individual blood units have been recorded.</div>}
+          </div>
+
           <div className="inventory-history">
             <div className="section-heading"><div><p className="eyebrow">STAFF AUDIT TRAIL</p><h2>Recent unit changes</h2></div></div>
             <div className="table-scroll">
@@ -1355,7 +1669,7 @@ export default function Dashboard() {
             </button>
           </div>
           <p className="muted privacy-note">
-            This directory and exact reported stock are visible to every signed-in hospital account. Hospital registration is not independently verified yet, so use approved accounts and confirm your organization permits this sharing. Call to confirm availability; stock reflects each hospital&apos;s last update.
+            This directory and verified usable stock totals are visible to every signed-in hospital account. Hospital registration is not independently verified yet, so use approved accounts and confirm your organization permits this sharing. Call to confirm availability; only unexpired, released unit records are shown.
           </p>
           <div className="hospital-network-filters">
             <label>
@@ -1387,7 +1701,7 @@ export default function Dashboard() {
             <p className="notice error" role="alert">{hospitalNetworkError}</p>
           )}
           {hospitalNetworkLoading && hospitalNetwork.length === 0 ? (
-            <div className="empty-state compact">Loading hospital contacts and reported inventory...</div>
+            <div className="empty-state compact">Loading hospital contacts and verified inventory...</div>
           ) : (
             <div className="hospital-network-list">
               {hospitalNetwork
@@ -1432,9 +1746,11 @@ export default function Dashboard() {
                         {inventory.map((item) => (
                           <div className="hospital-stock-item" key={item.bloodGroup}>
                             <span>{formatGroup(item.bloodGroup)}</span>
-                            <strong>{item.unitsAvailable}</strong>
+                            <strong>{item.verifiedUsableUnits}</strong>
                             <small>
-                              Updated {new Date(item.updatedAt).toLocaleString()}
+                              {item.updatedAt
+                                ? `Verified ${new Date(item.updatedAt).toLocaleString()}`
+                                : "Verification time unavailable"}
                             </small>
                           </div>
                         ))}
@@ -1448,12 +1764,12 @@ export default function Dashboard() {
                               <div className="hospital-stock-item unreported" key={group}>
                                 <span>{formatGroup(group)}</span>
                                 <strong>—</strong>
-                                <small>Not reported</small>
+                                <small>No verified units</small>
                               </div>
                             ))}
                         {hospitalNetworkBloodGroup !== "ALL" && inventory.length === 0 && (
                           <div className="hospital-stock-unreported">
-                            {formatGroup(hospitalNetworkBloodGroup)} inventory has not been reported.
+                            No verified usable {formatGroup(hospitalNetworkBloodGroup)} units are listed.
                           </div>
                         )}
                       </div>
@@ -1617,23 +1933,28 @@ function InventoryRow({
   forecast: Forecast;
   onSave: (group: BloodGroup, units: number) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(String(forecast.unitsAvailable));
-  useEffect(() => setDraft(String(forecast.unitsAvailable)), [forecast.unitsAvailable]);
+  const [draft, setDraft] = useState(String(forecast.reportedUnits));
+  useEffect(() => setDraft(String(forecast.reportedUnits)), [forecast.reportedUnits]);
   return (
     <tr>
       <td><strong>{formatGroup(forecast.bloodGroup)}</strong></td>
-      <td>{forecast.unitsAvailable}</td>
+      <td>{forecast.reportedUnits}<small className="table-subtext">{forecast.unverifiedUnits} unverified</small></td>
+      <td>{forecast.verifiedUsableUnits}</td>
+      <td>{forecast.pendingTestingUnits}</td>
+      <td>{forecast.reservedUnits}</td>
+      <td>{forecast.expiredUnits}{forecast.expiryRiskUnits ? <small className="table-subtext">{forecast.expiryRiskUnits} expiry risk</small> : null}</td>
+      <td>{forecast.quarantinedUnits}</td>
       <td>{forecast.projectedSevenDayDemand}</td>
       <td>
         {forecast.projectedShortage > 0
           ? <span className="shortage">{forecast.projectedShortage} short</span>
           : <span className="covered">Covered</span>}
       </td>
-      <td><span className={`confidence ${forecast.confidence}`}>{forecast.confidence}</span></td>
+      <td><span className={`confidence ${forecast.confidence}`}>{forecast.confidenceScore}% · {forecast.confidence}</span></td>
       <td>
         <div className="stock-edit">
           <input
-            aria-label={`Current ${formatGroup(forecast.bloodGroup)} units`}
+            aria-label={`Reported ${formatGroup(forecast.bloodGroup)} units`}
             type="number"
             min={0}
             value={draft}
@@ -1643,32 +1964,6 @@ function InventoryRow({
         </div>
       </td>
     </tr>
-  );
-}
-
-function PatientCaseRow({
-  patientCase,
-  busy,
-  onSave,
-}: {
-  patientCase: PatientCase;
-  busy: boolean;
-  onSave: (patientCase: PatientCase, unitsIssued: number) => Promise<void>;
-}) {
-  const [issued, setIssued] = useState(String(patientCase.unitsIssued));
-  useEffect(() => setIssued(String(patientCase.unitsIssued)), [patientCase.unitsIssued]);
-  return (
-    <article className="staff-case-row">
-      <div className="staff-case-info">
-        <strong>{patientCase.patientName} <span>{formatGroup(patientCase.bloodGroup)}</span></strong>
-        <small>{patientCase.patientReference || "No internal reference"} · {patientCase.status} · {new Date(patientCase.createdAt).toLocaleDateString()}</small>
-        <small>{patientCase.unitsIssued} of {patientCase.unitsRequired} units issued{patientCase.notes ? ` · ${patientCase.notes}` : ""}</small>
-      </div>
-      <div className="stock-edit">
-        <input aria-label={`Units issued for ${patientCase.patientName}`} type="number" min={0} max={patientCase.unitsRequired} value={issued} onChange={(event) => setIssued(event.target.value)} />
-        <button className="button small-button" disabled={busy} onClick={() => void onSave(patientCase, Number(issued))}>Update issued</button>
-      </div>
-    </article>
   );
 }
 

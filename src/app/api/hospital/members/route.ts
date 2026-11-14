@@ -41,6 +41,7 @@ export async function GET() {
     db.donor.count({
       where: {
         available: true,
+        callConsent: true,
         trackingConsent: true,
         latitude: { not: null },
         longitude: { not: null },
@@ -109,7 +110,9 @@ export async function POST(request: NextRequest) {
         db.donor.create({
           data: {
             ...donor,
+            registeredByHospitalId: hospital.id,
             available: true,
+            callConsent: true,
             trackingConsent: true,
             locationTokenHash,
           },

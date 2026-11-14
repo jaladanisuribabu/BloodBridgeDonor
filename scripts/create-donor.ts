@@ -21,6 +21,10 @@ async function main() {
       (await input.question("Has the donor explicitly consented to location tracking? (yes/no): "))
         .trim()
         .toLowerCase() === "yes";
+    const callConsent =
+      (await input.question("Has the donor explicitly consented to emergency calls? (yes/no): "))
+        .trim()
+        .toLowerCase() === "yes";
 
     const latitude = Number(latitudeText);
     const longitude = Number(longitudeText);
@@ -41,6 +45,7 @@ async function main() {
         name,
         phone,
         bloodGroup,
+        callConsent,
         trackingConsent,
         locationTokenHash,
         latitude,
@@ -48,7 +53,9 @@ async function main() {
       },
     });
 
-    console.info(`Donor ${name} created. Consent recorded: ${trackingConsent}.`);
+    console.info(
+      `Donor ${name} created. Call consent: ${callConsent}; location consent: ${trackingConsent}.`,
+    );
     if (trackingConsent) {
       console.info("Deliver this location token to the donor over a secure channel (shown once):");
       console.info(locationToken);

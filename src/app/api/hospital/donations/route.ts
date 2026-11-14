@@ -23,6 +23,7 @@ export async function GET() {
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   const [donors, donations] = await Promise.all([
     db.donor.findMany({
+      where: { registeredByHospitalId: hospital.id },
       orderBy: [{ name: "asc" }],
       select: { id: true, name: true, bloodGroup: true, nextEligibleAt: true },
     }),
@@ -50,8 +51,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Choose a donor and a valid donation date/time in the past." }, { status: 400 });
   }
 
-  const donor = await db.donor.findUnique({
-    where: { id: parsed.data.donorId },
+  const donor = await db.donor.findFirst({
+    where: {
+      id: parsed.data.donorId,
+      registeredByHospitalId: hospital.id,
+    },
     select: { id: true },
   });
   if (!donor) return NextResponse.json({ error: "Donor not found." }, { status: 404 });

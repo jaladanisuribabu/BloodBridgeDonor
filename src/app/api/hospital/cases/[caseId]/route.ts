@@ -30,53 +30,7 @@ export async function PATCH(
       if (unitsIssued > existing.unitsRequired) throw new Error("ISSUED_UNITS_EXCEED_REQUEST");
 
       const delta = unitsIssued - existing.unitsIssued;
-      if (existing.status === "CANCELLED" && delta > 0) {
-        throw new Error("PATIENT_CASE_CANCELLED");
-      }
-      if (delta > 0) {
-        const stock = await tx.bloodInventory.updateMany({
-          where: {
-            hospitalId: hospital.id,
-            bloodGroup: existing.bloodGroup,
-            unitsAvailable: { gte: delta },
-          },
-          data: { unitsAvailable: { decrement: delta } },
-        });
-        if (stock.count !== 1) throw new Error("INSUFFICIENT_BLOOD_STOCK");
-        await tx.inventoryChange.create({
-          data: {
-            hospitalId: hospital.id,
-            bloodGroup: existing.bloodGroup,
-            unitsDelta: -delta,
-            reason: "PATIENT_CASE_ISSUE",
-            patientCaseId: existing.id,
-          },
-        });
-      } else if (delta < 0) {
-        await tx.bloodInventory.upsert({
-          where: {
-            hospitalId_bloodGroup: {
-              hospitalId: hospital.id,
-              bloodGroup: existing.bloodGroup,
-            },
-          },
-          create: {
-            hospitalId: hospital.id,
-            bloodGroup: existing.bloodGroup,
-            unitsAvailable: -delta,
-          },
-          update: { unitsAvailable: { increment: -delta } },
-        });
-        await tx.inventoryChange.create({
-          data: {
-            hospitalId: hospital.id,
-            bloodGroup: existing.bloodGroup,
-            unitsDelta: -delta,
-            reason: "PATIENT_CASE_CORRECTION",
-            patientCaseId: existing.id,
-          },
-        });
-      }
+      if (delta !== 0) throw new Error("VERIFIED_UNIT_LEDGER_REQUIRED");
 
       const requestedStatus = parsed.data.status ?? existing.status;
       const status = requestedStatus === "CANCELLED"
@@ -105,11 +59,8 @@ export async function PATCH(
     if (error instanceof Error && error.message === "ISSUED_UNITS_EXCEED_REQUEST") {
       return NextResponse.json({ error: "Issued units cannot exceed requested units." }, { status: 400 });
     }
-    if (error instanceof Error && error.message === "INSUFFICIENT_BLOOD_STOCK") {
-      return NextResponse.json({ error: "There is not enough blood stock to issue those additional units. Update the inventory after verifying stock." }, { status: 409 });
-    }
-    if (error instanceof Error && error.message === "PATIENT_CASE_CANCELLED") {
-      return NextResponse.json({ error: "Cancelled cases cannot issue additional blood units." }, { status: 409 });
+    if (error instanceof Error && error.message === "VERIFIED_UNIT_LEDGER_REQUIRED") {
+      return NextResponse.json({ error: "Unit issues and corrections must be recorded in the verified blood-unit ledger." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "PATIENT_CASE_CHANGED") {
       return NextResponse.json({ error: "This patient case changed in another update. Refresh and retry." }, { status: 409 });

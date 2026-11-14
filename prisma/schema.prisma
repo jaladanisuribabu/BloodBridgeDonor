@@ -37,44 +37,61 @@ enum CallLogStatus {
   CANCELLED
 }
 
+enum BloodUnitStatus {
+  PENDING_TESTING
+  AVAILABLE
+  RESERVED
+  ISSUED
+  QUARANTINED
+}
+
 model Donor {
-  id                 String          @id @default(cuid())
-  name               String
-  phone              String          @unique
-  bloodGroup         BloodGroup
-  available          Boolean         @default(true)
-  trackingConsent    Boolean         @default(false)
-  locationTokenHash  String          @unique
-  latitude           Float?
-  longitude          Float?
-  nextEligibleAt     DateTime?
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  callLogs           CallLog[]
-  locationTracking   LocationTracking[]
-  donations          DonorDonation[]
+  id                     String             @id @default(cuid())
+  name                   String
+  phone                  String             @unique
+  bloodGroup             BloodGroup
+  available              Boolean            @default(true)
+  callConsent            Boolean            @default(false)
+  trackingConsent        Boolean            @default(false)
+  address                String?
+  registeredByHospitalId String?
+  locationTokenHash      String             @unique
+  latitude               Float?
+  longitude              Float?
+  nextEligibleAt         DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  callLogs               CallLog[]
+  locationTracking       LocationTracking[]
+  donations              DonorDonation[]
+  registeredBy           Hospital?          @relation("HospitalRegisteredDonors", fields: [registeredByHospitalId], references: [id], onDelete: SetNull)
+  bloodUnits             BloodUnit[]
 
   @@index([bloodGroup, available, trackingConsent])
+  @@index([registeredByHospitalId, createdAt])
 }
 
 model Hospital {
-  id             String            @id @default(cuid())
-  name           String
-  address        String?
-  city           String?
-  phone          String?
-  email          String            @unique
-  passwordHash   String
-  latitude       Float?
-  longitude      Float?
+  id                     String                  @id @default(cuid())
+  name                   String
+  address                String?
+  city                   String?
+  phone                  String?
+  email                  String                  @unique
+  passwordHash           String
+  latitude               Float?
+  longitude              Float?
   donationIntervalMonths Int?
-  createdAt      DateTime          @default(now())
-  requests       EmergencyRequest[]
-  inventory      BloodInventory[]
-  passwordResets HospitalPasswordReset[]
-  patientCases   PatientCase[]
-  donations      DonorDonation[]
-  inventoryChanges InventoryChange[]
+  createdAt              DateTime                @default(now())
+  requests               EmergencyRequest[]
+  inventory              BloodInventory[]
+  passwordResets         HospitalPasswordReset[]
+  patientCases           PatientCase[]
+  donations              DonorDonation[]
+  inventoryChanges       InventoryChange[]
+  registeredDonors       Donor[]                 @relation("HospitalRegisteredDonors")
+  bloodUnits             BloodUnit[]
+  bloodUnitAudits        BloodUnitAudit[]
 }
 
 model PatientAccount {
@@ -88,46 +105,46 @@ model PatientAccount {
 }
 
 model PatientCase {
-  id            String   @id @default(cuid())
-  hospitalId    String
-  patientName   String
+  id               String            @id @default(cuid())
+  hospitalId       String
+  patientName      String
   patientReference String?
-  bloodGroup    BloodGroup
-  unitsRequired Int
-  unitsIssued   Int      @default(0)
-  status        String   @default("OPEN")
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  hospital      Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  bloodGroup       BloodGroup
+  unitsRequired    Int
+  unitsIssued      Int               @default(0)
+  status           String            @default("OPEN")
+  notes            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  hospital         Hospital          @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
   inventoryChanges InventoryChange[]
 
   @@index([hospitalId, status, createdAt])
 }
 
 model InventoryChange {
-  id            String      @id @default(cuid())
+  id            String       @id @default(cuid())
   hospitalId    String
   bloodGroup    BloodGroup
   unitsDelta    Int
   reason        String
   patientCaseId String?
-  createdAt     DateTime    @default(now())
-  hospital      Hospital    @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  createdAt     DateTime     @default(now())
+  hospital      Hospital     @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
   patientCase   PatientCase? @relation(fields: [patientCaseId], references: [id], onDelete: SetNull)
 
   @@index([hospitalId, createdAt])
 }
 
 model DonorDonation {
-  id          String   @id @default(cuid())
-  donorId     String
-  hospitalId  String
-  donatedAt   DateTime
+  id             String    @id @default(cuid())
+  donorId        String
+  hospitalId     String
+  donatedAt      DateTime
   nextEligibleAt DateTime?
-  createdAt   DateTime @default(now())
-  donor       Donor    @relation(fields: [donorId], references: [id], onDelete: Cascade)
-  hospital    Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  donor          Donor     @relation(fields: [donorId], references: [id], onDelete: Cascade)
+  hospital       Hospital  @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
 
   @@index([donorId, donatedAt])
   @@index([hospitalId, donatedAt])
@@ -150,61 +167,98 @@ model HospitalPasswordReset {
 }
 
 model BloodInventory {
-  id            String     @id @default(cuid())
-  hospitalId    String
-  bloodGroup    BloodGroup
-  unitsAvailable Int       @default(0)
-  updatedAt     DateTime   @updatedAt
-  hospital      Hospital   @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  id             String     @id @default(cuid())
+  hospitalId     String
+  bloodGroup     BloodGroup
+  unitsAvailable Int        @default(0)
+  updatedAt      DateTime   @updatedAt
+  hospital       Hospital   @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
 
   @@unique([hospitalId, bloodGroup])
 }
 
+model BloodUnit {
+  id                   String           @id @default(cuid())
+  hospitalId           String
+  donorId              String?
+  bloodGroup           BloodGroup
+  unitCode             String           @unique
+  collectedAt          DateTime
+  expiresAt            DateTime
+  status               BloodUnitStatus  @default(PENDING_TESTING)
+  verifiedAt           DateTime?
+  reservationReference String?
+  quarantineReason     String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  hospital             Hospital         @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  donor                Donor?           @relation(fields: [donorId], references: [id], onDelete: SetNull)
+  auditEvents          BloodUnitAudit[]
+
+  @@index([hospitalId, bloodGroup, status, expiresAt])
+  @@index([donorId, collectedAt])
+}
+
+model BloodUnitAudit {
+  id          String           @id @default(cuid())
+  hospitalId  String
+  bloodUnitId String
+  fromStatus  BloodUnitStatus?
+  toStatus    BloodUnitStatus
+  reason      String
+  changedAt   DateTime         @default(now())
+  hospital    Hospital         @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  bloodUnit   BloodUnit        @relation(fields: [bloodUnitId], references: [id], onDelete: Cascade)
+
+  @@index([hospitalId, changedAt])
+  @@index([bloodUnitId, changedAt])
+}
+
 model EmergencyRequest {
-  id             String            @id @default(cuid())
-  hospitalId     String
-  bloodGroup     BloodGroup
-  unitsRequired  Int
-  unitsConfirmed Int               @default(0)
-  state          RequestState      @default(OPEN)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  hospital       Hospital          @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
-  callLogs       CallLog[]
+  id               String             @id @default(cuid())
+  hospitalId       String
+  bloodGroup       BloodGroup
+  unitsRequired    Int
+  unitsConfirmed   Int                @default(0)
+  state            RequestState       @default(OPEN)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  hospital         Hospital           @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  callLogs         CallLog[]
   locationTracking LocationTracking[]
 
   @@index([hospitalId, state, createdAt])
 }
 
 model CallLog {
-  id                String        @id @default(cuid())
+  id                 String             @id @default(cuid())
   emergencyRequestId String
-  donorId           String
-  twilioCallSid     String?       @unique
-  status            CallLogStatus @default(QUEUED)
-  responseDigit     String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  emergencyRequest  EmergencyRequest @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
-  donor             Donor         @relation(fields: [donorId], references: [id], onDelete: Cascade)
-  locationTracking  LocationTracking[]
+  donorId            String
+  twilioCallSid      String?            @unique
+  status             CallLogStatus      @default(QUEUED)
+  responseDigit      String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  emergencyRequest   EmergencyRequest   @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
+  donor              Donor              @relation(fields: [donorId], references: [id], onDelete: Cascade)
+  locationTracking   LocationTracking[]
 
   @@unique([emergencyRequestId, donorId])
   @@index([emergencyRequestId, status])
 }
 
 model LocationTracking {
-  id                String        @id @default(cuid())
+  id                 String           @id @default(cuid())
   emergencyRequestId String
-  callLogId         String
-  donorId           String
-  latitude          Float
-  longitude         Float
-  accuracyMeters    Float?
-  recordedAt        DateTime      @default(now())
-  emergencyRequest  EmergencyRequest @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
-  callLog           CallLog       @relation(fields: [callLogId], references: [id], onDelete: Cascade)
-  donor             Donor         @relation(fields: [donorId], references: [id], onDelete: Cascade)
+  callLogId          String
+  donorId            String
+  latitude           Float
+  longitude          Float
+  accuracyMeters     Float?
+  recordedAt         DateTime         @default(now())
+  emergencyRequest   EmergencyRequest @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
+  callLog            CallLog          @relation(fields: [callLogId], references: [id], onDelete: Cascade)
+  donor              Donor            @relation(fields: [donorId], references: [id], onDelete: Cascade)
 
   @@index([emergencyRequestId, donorId, recordedAt])
 }

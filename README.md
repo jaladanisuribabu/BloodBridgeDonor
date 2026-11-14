@@ -18,7 +18,7 @@ BloodBridge is a hospital-facing web application for emergency blood requests, n
 - **Account recovery:** single-use, 30-minute password-reset links delivered by Resend. Reset requests are rate-limited and return a generic message that does not reveal whether an email is registered. Forgotten hospital email recovery is administrator-assisted.
 - **Location:** donors post coordinates with a one-time generated bearer token after accepting. Tracking is opt-in and can be revoked.
 - **ETA:** displayed as a rough straight-line distance estimate at 25 km/h plus five minutes. It is not road-route guidance.
-- **Shortage forecast:** 90-day request history divided into an average daily demand, projected over seven days and compared with manually maintained stock. This is a transparent baseline, not a trained machine-learning model.
+- **BloodVerify:** only unexpired, unit-level records released by staff count as verified usable inventory. Reported aggregate counts remain unverified until reconciled to unit records; stock freshness, consistency, pending tests, reservations, quarantine, expiry, and 90-day request history feed transparent confidence, anomaly, and shortage estimates. This is deterministic decision support, not a trained machine-learning model.
 
 Request flow:
 
@@ -40,6 +40,8 @@ Apply migrations using `npm run db:migrate` (deployment) or `npm run db:dev` (lo
 
 The `20261113190000_patient_portal_and_staff_records` migration adds the patient portal account table, hospital city/mobile/policy fields, confidential hospital patient cases, inventory change history, and donor donation dates. Apply it before deploying this release.
 
+The `20261114110000_blood_verify_and_staff_donors` migration adds explicit donor call consent, donor address and hospital registration, unit-level inventory, and inventory status audit events. Apply all migrations before deploying the BloodVerify dashboard. Legacy aggregate stock is intentionally preserved as reported-but-unverified; do not fabricate unit breakdowns for existing counts.
+
 ## Local development
 
 Requirements: Node.js 22+, npm, and PostgreSQL 16+. Docker Compose is also supplied, but Docker is not required if PostgreSQL is already running.
@@ -59,7 +61,7 @@ On Android Chrome, open the deployed site and use **Install app** / **Add to Hom
    ```
 
 4. Visit `http://localhost:3000/hospital` and sign in with the seeded hospital account.
-5. Add donors with `npm run donor:create`. Record explicit consent; the command prints a random location token once. Deliver that token securely to the donor; never put it in source control or logs.
+5. Add donors from the dashboard's **Donor records** section or with `npm run donor:create`. Record call and tracking consent separately. Proximity calling requires an exact donor location and both consents; an area-only address such as a neighborhood is not enough. Deliver any one-time location token securely; never put it in source control or logs.
 
 The donor client should send location samples only after the donor has accepted and granted location permission:
 
@@ -82,8 +84,11 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | POST | `/api/hospital/register` | Create a hospital account and sign in |
 | PUT | `/api/hospital/settings` | Re-authenticate and update hospital email, password, mobile, profile name, and donation interval |
 | GET / POST | `/api/hospital/cases` | List or add hospital-private patient blood cases |
-| PATCH | `/api/hospital/cases/:caseId` | Record units issued, atomically debit stock, and audit the change |
+| PATCH | `/api/hospital/cases/:caseId` | Update a case; unit issue counts must be recorded through the verified unit ledger |
 | GET / POST | `/api/hospital/donations` | Read hospital donor history / record donation date and administrative next-review date |
+| GET / POST | `/api/hospital/donor-records` | Read or add hospital-managed donors with separate call and tracking consent |
+| GET / POST | `/api/hospital/inventory/units` | Read unit-level inventory or register a unit as pending testing |
+| PATCH | `/api/hospital/inventory/units/:unitId` | Release, reserve, issue, quarantine, or return a unit to testing with an audit event |
 | POST | `/api/hospital/login` | Create hospital session |
 | GET | `/api/hospital/google/start` | Start Google OpenID Connect sign-in |
 | GET | `/api/hospital/google/callback` | Verify Google identity and create hospital session |
@@ -96,9 +101,9 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | GET / POST | `/api/hospital/requests` | List requests / create emergency and start calls |
 | GET | `/api/hospital/donors?bloodGroup=A_POSITIVE` | Preview available matches within 5 km |
 | POST | `/api/hospital/requests/:id/complete` | Close out accepted donor call records |
-| GET / PUT | `/api/hospital/inventory` | Read seven-day baseline forecast / update stock |
+| GET / PUT | `/api/hospital/inventory` | Read BloodVerify stock confidence, anomalies, expiry risk and forecast / update reported stock |
 | GET / POST | `/api/hospital/members` | Read donor-network counts / import up to 150 explicitly consented donors |
-| GET | `/api/hospital/network` | List other registered hospitals' phone numbers, cities, and reported inventory for authenticated hospital accounts |
+| GET | `/api/hospital/network` | List other registered hospitals' phone numbers, cities, and verified usable stock for authenticated hospital accounts |
 | POST / PATCH / DELETE | `/api/donors/location` | Consent-token GPS, donor availability, and tracking revocation |
 | POST | `/api/ivr/answer` | Twilio voice prompt |
 | POST | `/api/ivr/response` | Process 1/2/no response |
@@ -127,11 +132,15 @@ The hospital dashboard separates live network counts from its 150-profile fictio
 
 Import only donors who have explicitly agreed to emergency contact and location sharing. The consent confirmation is required for every import. Donors are created as available and tracking-consented; each receives a randomly generated activation token for sharing location. The token CSV is downloaded only once after a successful import. Treat it as sensitive bearer credentials, deliver each donor’s token through a secure channel, and never commit or publicly share the file. The database stores token hashes rather than the plaintext tokens.
 
-## Patient portal and hospital records
+## Patient portal, donor records, and BloodVerify
 
-Patients register and sign in at `/patient`. Search results aggregate units across participating hospitals by city and blood group only; they do not disclose the contributing hospitals, donors, patients, or emergency call data. Availability is not a reservation and should be confirmed with the patient's care team.
+Patients register and sign in at `/patient`. Search results aggregate only unexpired, staff-released unit records across participating hospitals by city and blood group; legacy reported-only stock is excluded. Results do not disclose the contributing hospitals, donors, patients, or emergency call data. Availability is not a reservation and should be confirmed with the patient's care team.
 
-Hospital staff use the dashboard's single-section workspace. The separate **Patient records** area stores a name, optional hospital reference, blood group, requested/issued unit totals, and an optional staff note. Issuing additional units atomically decrements the hospital's blood inventory; corrections add the units back. Stock adjustments are retained in a hospital-only audit trail. Avoid entering diagnoses or unnecessary sensitive patient details.
+Hospital staff add donors from **Donor records**. Phone numbers are normalized to E.164 format; call consent and location consent are separate. A donor must have call consent, tracking consent, an exact donor-confirmed location, and be available and eligible before proximity calling. An address or neighborhood by itself is not used as a coordinate. Donor records and precise locations are hospital-only.
+
+Use **Blood inventory** to register each unit. A new unit increases the reported stock by one and starts in pending testing; when entering a unit already included in a legacy aggregate count, uncheck **This is newly collected stock** to avoid double-counting. Qualified staff can release it only after confirming required testing; only unexpired released units count as usable. Reservations, issues, quarantine, expired units, stale reports, mismatches, and large stock increases are surfaced in the audit/alert views. Issuing a unit decreases reported stock and writes a unit audit event. The confidence score is a transparent rule-based quality signal, not clinical or ML certification.
+
+Existing patient case data and tables are retained. The former Patient records dashboard section is now Donor records. Unit issues and corrections must be recorded through the verified unit ledger rather than changing aggregate stock through a patient case.
 
 The **Donation history** area records donor/date/time and derives an administrative next-review date from the hospital-configured interval in months. The interval must be selected by the hospital's medical director based on applicable rules; there is no assumed default. Donors with a recorded future review date are excluded from new call matching. A calculated date is not a medical eligibility determination: clinical staff remain responsible for donor screening. Changing the configured interval applies only to future donation records.
 
@@ -143,7 +152,7 @@ Registration does not verify that the email belongs to a hospital. Protect the r
 
 ## Hospital-to-hospital emergency coordination
 
-The hospital dashboard's **Hospital network** section lists every other registered hospital's phone number, city, and recorded units by blood group. It is available to every signed-in hospital account at all times; it does not expose hospital emails, exact addresses, or coordinates. **Hospital registration is not independently verified**, so do not use this feature with real inventory until account enrollment is restricted to approved hospitals and participating organizations authorize the sharing. Add or update the phone number and stock in Hospital settings and Blood inventory. A `tel:` link lets staff call another facility directly. Inventory is only as current as that hospital's last stock update, so staff must call to confirm availability, compatibility, and transfer arrangements. BloodBridge does not reserve stock or arrange transfers between hospitals.
+The hospital dashboard's **Hospital network** section lists every other registered hospital's phone number, city, and verified usable units by blood group. It is available to every signed-in hospital account at all times; it does not expose hospital emails, exact addresses, or coordinates. **Hospital registration is not independently verified**, so do not use this feature with real inventory until account enrollment is restricted to approved hospitals and participating organizations authorize the sharing. Add or update the phone number in Hospital settings and register unit-level stock in Blood inventory. A `tel:` link lets staff call another facility directly. Staff must call to confirm availability, compatibility, and transfer arrangements. BloodBridge does not reserve stock or arrange transfers between hospitals.
 
 ## Google hospital sign-in
 
@@ -154,7 +163,7 @@ Create a Google OAuth client for a web application and add the exact authorized 
 The repository includes a GitHub Actions workflow for install, Prisma generation, type-check, and build. Deployment options:
 
 - **Container host:** deploy the included `Dockerfile` with a managed PostgreSQL URL; the container applies migrations before starting.
-- **Managed Next.js platform:** deploy the Next.js project and set the same production environment variables. Run `npm run db:migrate` as a release/pre-deploy step; do not rely on build-time database access.
+- **Vercel:** the production build runs `npm run db:migrate` before building the app. Set `DATABASE_URL` in the Vercel Production environment; the deployment will stop if migration cannot be applied. Preview deployments do not migrate the production database. For other managed Next.js platforms, run `npm run db:migrate` as a release/pre-deploy step.
 
 Before deploying, provision PostgreSQL, use a unique `SESSION_SECRET`, set `APP_URL` to the final HTTPS domain, set Twilio secrets, configure hospital seed credentials securely, and add an initial hospital account through the seed command. Do not commit `.env` or paste secrets into GitHub issues/chat.
 

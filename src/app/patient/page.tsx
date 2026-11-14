@@ -107,7 +107,7 @@ export default function PatientPage() {
       };
       if (!response.ok) throw new Error(data.error ?? "Availability search failed.");
       setAvailability(data.availability ?? []);
-      if (!data.availability?.length) setMessage("No units are currently reported for this search area.");
+      if (!data.availability?.length) setMessage("No verified usable units are currently available in this search area.");
     } catch (reason) {
       setError(true);
       setMessage(reason instanceof Error ? reason.message : "Availability search failed.");
@@ -131,7 +131,7 @@ export default function PatientPage() {
           <div className="brand-mark">B</div>
           <p className="eyebrow">PATIENT PORTAL</p>
           <h1>Blood availability</h1>
-          <p className="muted">Create a patient account or sign in to check reported blood-unit totals in your area.</p>
+          <p className="muted">Create a patient account or sign in to check verified, usable blood-unit totals in your area.</p>
           <div className="auth-switch" role="tablist" aria-label="Patient account">
             <button type="button" role="tab" aria-selected={!registerMode} onClick={() => { setRegisterMode(false); setMessage(""); }}>Sign in</button>
             <button type="button" role="tab" aria-selected={registerMode} onClick={() => { setRegisterMode(true); setMessage(""); }}>Register</button>
@@ -161,8 +161,8 @@ export default function PatientPage() {
       </header>
       <section className="patient-content">
         <p className="eyebrow">LOCAL BLOOD AVAILABILITY</p>
-        <h1>Check reported units</h1>
-        <p className="muted">Search aggregated stock totals in a city. Results do not identify hospitals or donors. Contact your care team to confirm availability before traveling.</p>
+        <h1>Check verified units</h1>
+        <p className="muted">Search aggregated totals of unexpired units released by hospital staff. Results do not identify hospitals or donors. Contact your care team to confirm availability before traveling.</p>
         <form className="patient-search panel" onSubmit={(event) => void searchInventory(event)}>
           <label>City or area<input required minLength={2} maxLength={120} value={searchCity} onChange={(event) => setSearchCity(event.target.value)} /></label>
           <label>Blood group<select value={bloodGroup} onChange={(event) => setBloodGroup(event.target.value)}><option value="">All blood groups</option>{groups.map((group) => <option key={group} value={group}>{prettyGroup(group)}</option>)}</select></label>
@@ -170,9 +170,9 @@ export default function PatientPage() {
         </form>
         {message && <p className={`notice${error ? " error" : ""}`} role="status">{message}</p>}
         {availability.length > 0 && <section className="patient-results panel">
-          <div className="section-heading"><div><p className="eyebrow">AGGREGATED STOCK</p><h2>{searchCity}</h2></div><span className="demo-badge">Hospital locations hidden</span></div>
-          <div className="availability-grid">{availability.map((item) => <article key={item.bloodGroup}><span>{prettyGroup(item.bloodGroup)}</span><strong>{item.unitsAvailable}</strong><small>units reported</small></article>)}</div>
-          <p className="fine-print">Availability is reported by participating hospitals and may change. It is not a reservation or clinical confirmation.</p>
+          <div className="section-heading"><div><p className="eyebrow">AGGREGATED VERIFIED STOCK</p><h2>{searchCity}</h2></div><span className="demo-badge">Hospital locations hidden</span></div>
+          <div className="availability-grid">{availability.map((item) => <article key={item.bloodGroup}><span>{prettyGroup(item.bloodGroup)}</span><strong>{item.unitsAvailable}</strong><small>verified usable units</small></article>)}</div>
+          <p className="fine-print">Only unexpired units released by hospital staff are included. Availability can change and is not a reservation or clinical confirmation.</p>
         </section>}
       </section>
     </main>

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BloodGroup } from "@prisma/client";
+import { BloodUnitStatus } from "@prisma/client";
 import { z } from "zod";
 import { hospitalForRequest } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { summarizeBloodStock } from "@/lib/blood-verify";
 import { bloodGroupSchema } from "@/lib/validation";
 
 const inventorySchema = z.object({
@@ -14,7 +15,9 @@ export async function GET() {
   const hospital = await hospitalForRequest();
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
-  const [inventory, usage, changes] = await Promise.all([
+  const now = new Date();
+  const expiringCutoff = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const [inventory, usage, changes, unitStatuses, expiredStatuses, expiringSoon, oldestVerification] = await Promise.all([
     db.bloodInventory.findMany({ where: { hospitalId: hospital.id } }),
     db.emergencyRequest.groupBy({
       by: ["bloodGroup"],
@@ -31,26 +34,73 @@ export async function GET() {
       take: 100,
       include: { patientCase: { select: { patientName: true } } },
     }),
+    db.bloodUnit.groupBy({
+      by: ["bloodGroup", "status"],
+      where: {
+        hospitalId: hospital.id,
+        status: { not: BloodUnitStatus.ISSUED },
+      },
+      _count: { _all: true },
+    }),
+    db.bloodUnit.groupBy({
+      by: ["bloodGroup", "status"],
+      where: {
+        hospitalId: hospital.id,
+        status: { not: BloodUnitStatus.ISSUED },
+        expiresAt: { lte: now },
+      },
+      _count: { _all: true },
+    }),
+    db.bloodUnit.groupBy({
+      by: ["bloodGroup"],
+      where: {
+        hospitalId: hospital.id,
+        status: BloodUnitStatus.AVAILABLE,
+        expiresAt: { gt: now, lte: expiringCutoff },
+      },
+      _count: { _all: true },
+    }),
+    db.bloodUnit.groupBy({
+      by: ["bloodGroup"],
+      where: {
+        hospitalId: hospital.id,
+        status: BloodUnitStatus.AVAILABLE,
+        expiresAt: { gt: now },
+        verifiedAt: { not: null },
+      },
+      _min: { verifiedAt: true },
+    }),
   ]);
-  const availableByGroup = new Map(
-    inventory.map((row) => [row.bloodGroup, row.unitsAvailable]),
-  );
-  const demandByGroup = new Map(
-    usage.map((row) => [row.bloodGroup, row._sum.unitsRequired ?? 0]),
-  );
-
-  const forecasts = Object.values(BloodGroup).map((bloodGroup) => {
-    const unitsAvailable = availableByGroup.get(bloodGroup) ?? 0;
-    const historicalUnits90Days = demandByGroup.get(bloodGroup) ?? 0;
-    const projectedSevenDayDemand = Math.ceil((historicalUnits90Days / 90) * 7);
-    return {
-      bloodGroup,
-      unitsAvailable,
-      historicalUnits90Days,
-      projectedSevenDayDemand,
-      projectedShortage: Math.max(0, projectedSevenDayDemand - unitsAvailable),
-      confidence: historicalUnits90Days >= 10 ? "moderate" : "low",
-    };
+  const forecasts = summarizeBloodStock({
+    now,
+    inventory,
+    unitStatuses: unitStatuses.map((row) => ({
+      bloodGroup: row.bloodGroup,
+      status: row.status,
+      count: row._count._all,
+    })),
+    expiredStatuses: expiredStatuses.map((row) => ({
+      bloodGroup: row.bloodGroup,
+      status: row.status,
+      count: row._count._all,
+    })),
+    expiringSoon: expiringSoon.map((row) => ({
+      bloodGroup: row.bloodGroup,
+      count: row._count._all,
+    })),
+    oldestVerification: oldestVerification.map((row) => ({
+      bloodGroup: row.bloodGroup,
+      verifiedAt: row._min.verifiedAt,
+    })),
+    demand90Days: usage.map((row) => ({
+      bloodGroup: row.bloodGroup,
+      units: row._sum.unitsRequired ?? 0,
+    })),
+    recentChanges: changes.map((change) => ({
+      bloodGroup: change.bloodGroup,
+      unitsDelta: change.unitsDelta,
+      createdAt: change.createdAt,
+    })),
   });
 
   return NextResponse.json({ forecasts, changes });
