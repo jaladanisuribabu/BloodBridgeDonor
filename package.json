@@ -11,7 +11,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:dev": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "donor:create": "tsx scripts/create-donor.ts"
   },
   "dependencies": {
