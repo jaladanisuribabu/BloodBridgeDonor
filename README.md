@@ -98,6 +98,7 @@ All `/api/hospital/*` routes require a hospital session. Unauthorized callers re
 | POST | `/api/hospital/requests/:id/complete` | Close out accepted donor call records |
 | GET / PUT | `/api/hospital/inventory` | Read seven-day baseline forecast / update stock |
 | GET / POST | `/api/hospital/members` | Read donor-network counts / import up to 150 explicitly consented donors |
+| GET | `/api/hospital/network` | List other registered hospitals' phone numbers, cities, and reported inventory for authenticated hospital accounts |
 | POST / PATCH / DELETE | `/api/donors/location` | Consent-token GPS, donor availability, and tracking revocation |
 | POST | `/api/ivr/answer` | Twilio voice prompt |
 | POST | `/api/ivr/response` | Process 1/2/no response |
@@ -139,6 +140,10 @@ The **Donation history** area records donor/date/time and derives an administrat
 To create a hospital login, open `/hospital`, choose **Register**, enter the hospital name and email, set a password of at least 12 characters, confirm it, and select **Create hospital account**. The account is signed in immediately. Before donor matching is available, complete the dashboard setup with the hospital address and latitude/longitude. For future visits, use **Sign in** with the same email and password.
 
 Registration does not verify that the email belongs to a hospital. Protect the registration endpoint with appropriate operational controls before public production use. Google sign-in is only available after an account exists with the same verified email, and Google OAuth testing-mode accounts must also be listed as test users.
+
+## Hospital-to-hospital emergency coordination
+
+The hospital dashboard's **Hospital network** section lists every other registered hospital's phone number, city, and recorded units by blood group. It is available to every signed-in hospital account at all times; it does not expose hospital emails, exact addresses, or coordinates. **Hospital registration is not independently verified**, so do not use this feature with real inventory until account enrollment is restricted to approved hospitals and participating organizations authorize the sharing. Add or update the phone number and stock in Hospital settings and Blood inventory. A `tel:` link lets staff call another facility directly. Inventory is only as current as that hospital's last stock update, so staff must call to confirm availability, compatibility, and transfer arrangements. BloodBridge does not reserve stock or arrange transfers between hospitals.
 
 ## Google hospital sign-in
 

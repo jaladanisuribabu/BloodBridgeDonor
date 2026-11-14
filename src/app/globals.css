@@ -295,6 +295,29 @@ footer { max-width: none; padding-left: 260px; }
 .staff-case-info small { color: var(--muted); font-size: 10px; }
 .donation-entry-form { align-items: end; margin-bottom: 20px; }
 .donation-entry-form .button { min-height: 40px; }
+.hospital-network-panel { display: grid; gap: 16px; }
+.hospital-network-panel > .section-heading, .hospital-network-panel > .muted, .hospital-network-panel > .fine-print { margin-bottom: 0; }
+.hospital-network-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, .45fr); gap: 14px; max-width: 860px; }
+.hospital-network-filters label { display: grid; gap: 6px; color: #37464d; font-size: 11px; font-weight: 600; }
+.hospital-network-filters input, .hospital-network-filters select { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid #dfe5e7; border-radius: 8px; background: #fff; color: #263238; font: inherit; }
+.hospital-network-list { display: grid; gap: 12px; }
+.hospital-network-card { min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.hospital-network-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+.hospital-network-card-heading h3 { margin: 0; color: #263238; font-size: 15px; }
+.hospital-network-card-heading p { margin: 4px 0 0; color: #66757b; font-size: 11px; }
+.hospital-phone-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.hospital-phone-number { color: #34434a; font-size: 12px; font-weight: 600; text-decoration: none; }
+.hospital-phone-number:hover { color: var(--red-dark); text-decoration: underline; }
+.hospital-call-button { min-height: 38px; padding: 9px 14px; text-decoration: none; white-space: nowrap; }
+.hospital-no-phone { color: #758188; font-size: 11px; }
+.hospital-stock-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.hospital-stock-item { display: grid; min-width: 0; gap: 4px; padding: 10px; border: 1px solid #edf0f1; border-radius: 8px; background: #fcfdfd; }
+.hospital-stock-item > span { color: #57666d; font-size: 10px; }
+.hospital-stock-item > strong { color: #202c32; font-size: 19px; line-height: 1.15; }
+.hospital-stock-item > small { color: #839096; font-size: 9px; line-height: 1.35; }
+.hospital-stock-item.unreported { background: #f7f8f8; }
+.hospital-stock-item.unreported > strong { color: #8a969b; }
+.hospital-stock-unreported { grid-column: 1 / -1; padding: 10px; border-radius: 8px; background: #f7f8f8; color: #66757b; font-size: 11px; }
 .patient-portal-link { display: block; margin-top: 20px; color: var(--red-dark); font-size: 12px; font-weight: 700; text-align: center; text-decoration: none; }
 .patient-back-link { display: block; margin-bottom: 20px; color: #657279; font-size: 11px; text-decoration: none; }
 .patient-shell { min-height: 100vh; }
@@ -316,10 +339,14 @@ footer { max-width: none; padding-left: 260px; }
   .patient-content { margin: 28px auto; }
   .patient-search { grid-template-columns: 1fr; }
   .availability-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hospital-network-filters { grid-template-columns: 1fr; }
+  .hospital-stock-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 540px) {
   .staff-case-row { align-items: flex-start; flex-direction: column; }
   .staff-case-row .stock-edit { width: 100%; }
+  .hospital-network-card-heading { align-items: flex-start; flex-direction: column; }
+  .hospital-phone-actions { justify-content: flex-start; }
 }
 .login-shell { position: relative; isolation: isolate; overflow: hidden; color: #172229; background: radial-gradient(circle at 50% 20%, #fff 0, #fbf0f1 49%, #f5f7f8 100%); }
 .login-card { position: relative; z-index: 1; color: #172229; }

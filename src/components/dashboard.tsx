@@ -100,11 +100,23 @@ type HospitalDonor = {
   bloodGroup: BloodGroup;
   nextEligibleAt: string | null;
 };
+type HospitalContact = {
+  id: string;
+  name: string;
+  city: string | null;
+  phone: string | null;
+  inventory: {
+    bloodGroup: BloodGroup;
+    unitsAvailable: number;
+    updatedAt: string;
+  }[];
+};
 type DashboardSection =
   | "overview"
   | "emergency"
   | "tracking"
   | "inventory"
+  | "hospital-network"
   | "members"
   | "requests"
   | "patients"
@@ -148,6 +160,13 @@ export default function Dashboard() {
   const [patientCases, setPatientCases] = useState<PatientCase[]>([]);
   const [hospitalDonors, setHospitalDonors] = useState<HospitalDonor[]>([]);
   const [donationRecords, setDonationRecords] = useState<DonationRecord[]>([]);
+  const [hospitalNetwork, setHospitalNetwork] = useState<HospitalContact[]>([]);
+  const [hospitalNetworkLoading, setHospitalNetworkLoading] = useState(false);
+  const [hospitalNetworkError, setHospitalNetworkError] = useState("");
+  const [hospitalNetworkSearch, setHospitalNetworkSearch] = useState("");
+  const [hospitalNetworkBloodGroup, setHospitalNetworkBloodGroup] = useState<
+    BloodGroup | "ALL"
+  >("ALL");
   const [activeSection, setActiveSection] = useState<DashboardSection>("overview");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -242,12 +261,42 @@ export default function Dashboard() {
     }
   }, [donationDonorId]);
 
+  const refreshHospitalNetwork = useCallback(async () => {
+    setHospitalNetworkLoading(true);
+    setHospitalNetworkError("");
+    try {
+      const response = await fetch("/api/hospital/network", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, "Could not load the hospital network."),
+        );
+      }
+      const data = (await response.json()) as { hospitals: HospitalContact[] };
+      setHospitalNetwork(data.hospitals);
+    } catch (error) {
+      setHospitalNetworkError(
+        requestError(error, "Could not load the hospital network."),
+      );
+    } finally {
+      setHospitalNetworkLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!hospital || (activeSection !== "patients" && activeSection !== "donations")) return;
     void refreshStaffRecords(activeSection).catch((error: unknown) => {
       setMessage(requestError(error, "Could not load staff records."));
     });
   }, [hospital, activeSection, refreshStaffRecords]);
+
+  useEffect(() => {
+    if (!hospital || activeSection !== "hospital-network") return;
+    void refreshHospitalNetwork();
+    const timer = window.setInterval(() => {
+      void refreshHospitalNetwork();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [hospital, activeSection, refreshHospitalNetwork]);
 
   useEffect(() => {
     let active = true;
@@ -967,6 +1016,7 @@ export default function Dashboard() {
             <button type="button" className={activeSection === "emergency" ? "active" : ""} onClick={() => setActiveSection("emergency")}><span>✚</span> Emergency dispatch</button>
             <button type="button" className={activeSection === "tracking" ? "active" : ""} onClick={() => setActiveSection("tracking")}><span>⌖</span> Donor tracking</button>
             <button type="button" className={activeSection === "inventory" ? "active" : ""} onClick={() => setActiveSection("inventory")}><span>▤</span> Blood inventory</button>
+            <button type="button" className={activeSection === "hospital-network" ? "active" : ""} onClick={() => setActiveSection("hospital-network")}><span>☎</span> Hospital network</button>
             <button type="button" className={activeSection === "members" ? "active" : ""} onClick={() => setActiveSection("members")}><span>♧</span> Donor network</button>
             <button type="button" className={activeSection === "requests" ? "active" : ""} onClick={() => setActiveSection("requests")}><span>◷</span> Recent requests</button>
             <button type="button" className={activeSection === "patients" ? "active" : ""} onClick={() => setActiveSection("patients")}><span>▣</span> Patient records</button>
@@ -1289,6 +1339,150 @@ export default function Dashboard() {
           </div>
         </section>
 
+        <section className={`panel hospital-network-panel dashboard-view${activeSection === "hospital-network" ? "" : " section-hidden"}`} id="hospital-network">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">INTER-HOSPITAL EMERGENCY COORDINATION</p>
+              <h2>Hospital network</h2>
+            </div>
+            <button
+              type="button"
+              className="button subtle"
+              onClick={() => void refreshHospitalNetwork()}
+              disabled={hospitalNetworkLoading}
+            >
+              {hospitalNetworkLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          <p className="muted privacy-note">
+            This directory and exact reported stock are visible to every signed-in hospital account. Hospital registration is not independently verified yet, so use approved accounts and confirm your organization permits this sharing. Call to confirm availability; stock reflects each hospital&apos;s last update.
+          </p>
+          <div className="hospital-network-filters">
+            <label>
+              Search hospital or city
+              <input
+                type="search"
+                maxLength={120}
+                value={hospitalNetworkSearch}
+                onChange={(event) => setHospitalNetworkSearch(event.target.value)}
+                placeholder="Search by hospital or city"
+              />
+            </label>
+            <label>
+              Filter blood group
+              <select
+                value={hospitalNetworkBloodGroup}
+                onChange={(event) =>
+                  setHospitalNetworkBloodGroup(event.target.value as BloodGroup | "ALL")
+                }
+              >
+                <option value="ALL">All blood groups</option>
+                {bloodGroups.map((group) => (
+                  <option key={group} value={group}>{formatGroup(group)}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {hospitalNetworkError && (
+            <p className="notice error" role="alert">{hospitalNetworkError}</p>
+          )}
+          {hospitalNetworkLoading && hospitalNetwork.length === 0 ? (
+            <div className="empty-state compact">Loading hospital contacts and reported inventory...</div>
+          ) : (
+            <div className="hospital-network-list">
+              {hospitalNetwork
+                .filter((contact) => {
+                  const search = hospitalNetworkSearch.trim().toLocaleLowerCase();
+                  return !search ||
+                    contact.name.toLocaleLowerCase().includes(search) ||
+                    (contact.city ?? "").toLocaleLowerCase().includes(search);
+                })
+                .map((contact) => {
+                  const inventory = hospitalNetworkBloodGroup === "ALL"
+                    ? contact.inventory
+                    : contact.inventory.filter(
+                        (item) => item.bloodGroup === hospitalNetworkBloodGroup,
+                      );
+                  const phoneHref = getPhoneHref(contact.phone);
+                  return (
+                    <article className="hospital-network-card" key={contact.id}>
+                      <div className="hospital-network-card-heading">
+                        <div>
+                          <h3>{contact.name}</h3>
+                          <p>{contact.city || "City not provided"}</p>
+                        </div>
+                        {phoneHref ? (
+                          <div className="hospital-phone-actions">
+                            <a className="hospital-phone-number" href={phoneHref}>
+                              {contact.phone}
+                            </a>
+                            <a
+                              className="button primary hospital-call-button"
+                              href={phoneHref}
+                              aria-label={`Call ${contact.name}`}
+                            >
+                              Call hospital
+                            </a>
+                          </div>
+                        ) : (
+                          <span className="hospital-no-phone">Phone not listed</span>
+                        )}
+                      </div>
+                      <div className="hospital-stock-grid">
+                        {inventory.map((item) => (
+                          <div className="hospital-stock-item" key={item.bloodGroup}>
+                            <span>{formatGroup(item.bloodGroup)}</span>
+                            <strong>{item.unitsAvailable}</strong>
+                            <small>
+                              Updated {new Date(item.updatedAt).toLocaleString()}
+                            </small>
+                          </div>
+                        ))}
+                        {hospitalNetworkBloodGroup === "ALL" &&
+                          bloodGroups
+                            .filter(
+                              (group) =>
+                                !contact.inventory.some((item) => item.bloodGroup === group),
+                            )
+                            .map((group) => (
+                              <div className="hospital-stock-item unreported" key={group}>
+                                <span>{formatGroup(group)}</span>
+                                <strong>—</strong>
+                                <small>Not reported</small>
+                              </div>
+                            ))}
+                        {hospitalNetworkBloodGroup !== "ALL" && inventory.length === 0 && (
+                          <div className="hospital-stock-unreported">
+                            {formatGroup(hospitalNetworkBloodGroup)} inventory has not been reported.
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              {!hospitalNetworkLoading && hospitalNetwork.length === 0 && (
+                <div className="empty-state compact">
+                  No other hospitals are registered in the network yet.
+                </div>
+              )}
+              {hospitalNetwork.length > 0 &&
+                !hospitalNetwork.some((contact) => {
+                  const search = hospitalNetworkSearch.trim().toLocaleLowerCase();
+                  return !search ||
+                    contact.name.toLocaleLowerCase().includes(search) ||
+                    (contact.city ?? "").toLocaleLowerCase().includes(search);
+                }) && (
+                  <div className="empty-state compact">
+                    No hospitals match your search.
+                  </div>
+                )}
+            </div>
+          )}
+          <p className="fine-print">
+            Inventory figures are supplied by each hospital and may be out of date. Call to confirm units, compatibility, transfer arrangements, and current availability. BloodBridge does not initiate inter-hospital transfers.
+          </p>
+        </section>
+
         <section className={`panel donor-network-panel dashboard-view${activeSection === "members" ? "" : " section-hidden"}`} id="members">
           <div className="section-heading">
             <div><p className="eyebrow">MEMBER MANAGEMENT</p><h2>Donor network</h2></div>
@@ -1499,6 +1693,13 @@ function mapPosition(
 
 function formatGroup(group: BloodGroup) {
   return group.replace("_NEGATIVE", "−").replace("_POSITIVE", "+");
+}
+
+function getPhoneHref(phone: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) return null;
+  return `tel:${phone.trim().startsWith("+") ? "+" : ""}${digits}`;
 }
 
 function formatStatus(status: string) {
