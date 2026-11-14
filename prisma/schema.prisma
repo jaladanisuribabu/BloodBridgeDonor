@@ -45,6 +45,12 @@ enum BloodUnitStatus {
   QUARANTINED
 }
 
+enum EmergencySmsStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
 model Donor {
   id                     String             @id @default(cuid())
   name                   String
@@ -53,6 +59,7 @@ model Donor {
   available              Boolean            @default(true)
   callConsent            Boolean            @default(false)
   trackingConsent        Boolean            @default(false)
+  smsConsent             Boolean            @default(false)
   address                String?
   registeredByHospitalId String?
   locationTokenHash      String             @unique
@@ -66,8 +73,11 @@ model Donor {
   donations              DonorDonation[]
   registeredBy           Hospital?          @relation("HospitalRegisteredDonors", fields: [registeredByHospitalId], references: [id], onDelete: SetNull)
   bloodUnits             BloodUnit[]
+  emergencySmsLogs       EmergencySmsLog[]
 
   @@index([bloodGroup, available, trackingConsent])
+  @@index([bloodGroup, available, callConsent, nextEligibleAt])
+  @@index([bloodGroup, available, smsConsent, nextEligibleAt])
   @@index([registeredByHospitalId, createdAt])
 }
 
@@ -226,6 +236,7 @@ model EmergencyRequest {
   hospital         Hospital           @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
   callLogs         CallLog[]
   locationTracking LocationTracking[]
+  smsLogs          EmergencySmsLog[]
 
   @@index([hospitalId, state, createdAt])
 }
@@ -242,6 +253,23 @@ model CallLog {
   emergencyRequest   EmergencyRequest   @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
   donor              Donor              @relation(fields: [donorId], references: [id], onDelete: Cascade)
   locationTracking   LocationTracking[]
+
+  @@unique([emergencyRequestId, donorId])
+  @@index([emergencyRequestId, status])
+  @@index([donorId, status])
+}
+
+model EmergencySmsLog {
+  id                 String             @id @default(cuid())
+  emergencyRequestId String
+  donorId            String
+  messageSid         String?            @unique
+  status             EmergencySmsStatus @default(QUEUED)
+  errorCode          String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  emergencyRequest   EmergencyRequest   @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
+  donor              Donor              @relation(fields: [donorId], references: [id], onDelete: Cascade)
 
   @@unique([emergencyRequestId, donorId])
   @@index([emergencyRequestId, status])

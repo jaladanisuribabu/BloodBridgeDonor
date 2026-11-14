@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { dispatchRequest } from "@/lib/dispatch";
 import { hospitalForRequest } from "@/lib/auth";
+import { sendEmergencySmsAlerts } from "@/lib/notifications";
+import { getTwilioConfigurationStatus } from "@/lib/twilio";
 import { emergencyRequestSchema } from "@/lib/validation";
 
 export async function GET() {
@@ -25,6 +27,7 @@ export async function GET() {
           },
         },
       },
+      smsLogs: { select: { status: true } },
     },
   });
 
@@ -36,6 +39,9 @@ export async function GET() {
       unitsConfirmed: request.unitsConfirmed,
       state: request.state,
       createdAt: request.createdAt,
+      smsSent: request.smsLogs.filter((log) => log.status === "SENT").length,
+      smsFailed: request.smsLogs.filter((log) => log.status === "FAILED").length,
+      smsQueued: request.smsLogs.filter((log) => log.status === "QUEUED").length,
       donors: request.callLogs.map((call) => {
         const location =
           call.status === "ACCEPTED" &&
@@ -75,9 +81,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const hospital = await hospitalForRequest();
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  if (hospital.latitude === null || hospital.longitude === null || !hospital.address) {
+  if (!hospital.address) {
     return NextResponse.json(
-      { error: "Add the hospital address and map coordinates before requesting donors." },
+      { error: "Add the hospital address before requesting donors." },
       { status: 409 },
     );
   }
@@ -101,29 +107,56 @@ export async function POST(request: NextRequest) {
     select: { id: true },
   });
 
+  const warnings: string[] = [];
+  const voiceStatus = getTwilioConfigurationStatus().voice;
+  let startedCalls = 0;
   try {
     const outcome = await dispatchRequest(created.id);
+    startedCalls = outcome.startedCalls;
+    if (outcome.failedCalls > 0) {
+      warnings.push(`${outcome.failedCalls} donor call(s) could not start.`);
+    }
     if (outcome.startedCalls === 0) {
-      return NextResponse.json(
-        {
-          id: created.id,
-          warning: "No eligible nearby donors were available to call.",
-        },
-        { status: 201 },
-      );
+      warnings.push("No eligible, call-consented donors were available.");
     }
   } catch (error) {
     console.error(`Unable to dispatch request ${created.id}:`, error);
-    return NextResponse.json(
-      {
-        id: created.id,
-        error: "The request was saved, but no donor calls could start. Check IVR configuration.",
-      },
-      { status: 503 },
+    warnings.push(
+      voiceStatus.configured
+        ? "Twilio could not start donor calls. Review provider logs and retry dispatch."
+        : `Voice IVR is not configured. Add ${voiceStatus.missingVariables.join(", ")} in the server environment, then retry dispatch.`,
     );
   }
 
-  return NextResponse.json({ id: created.id }, { status: 201 });
+  try {
+    const alerts = await sendEmergencySmsAlerts(created.id);
+    if (!alerts.missingVariables.length && alerts.eligible > 0) {
+      if (alerts.sent > 0) {
+        warnings.push(`${alerts.sent} opted-in donor SMS alert(s) sent.`);
+      }
+      if (alerts.failed > 0) {
+        warnings.push(`${alerts.failed} opted-in donor SMS alert(s) failed.`);
+      }
+    } else if (alerts.missingVariables.length && alerts.eligible > 0) {
+      warnings.push(
+        `SMS alerts are not configured. Add ${alerts.missingVariables.join(", ")} in the server environment.`,
+      );
+    } else if (alerts.eligible === 0) {
+      warnings.push("No donors have opted in to SMS alerts for this blood group.");
+    }
+  } catch (error) {
+    console.error(`Unable to send SMS alerts for request ${created.id}:`, error);
+    warnings.push("SMS alerts could not be completed. Review provider logs.");
+  }
+
+  return NextResponse.json(
+    {
+      id: created.id,
+      startedCalls,
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+    },
+    { status: 201 },
+  );
 }
 
 function distanceInKm(lat1: number, lon1: number, lat2: number, lon2: number) {

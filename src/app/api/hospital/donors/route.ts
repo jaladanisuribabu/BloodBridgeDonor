@@ -1,19 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hospitalForRequest } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { findNearbyDonors } from "@/lib/proximity";
+import { findEligibleDonors } from "@/lib/proximity";
 import { bloodGroupSchema } from "@/lib/validation";
 
 export async function GET(request: NextRequest) {
   const hospital = await hospitalForRequest();
   if (!hospital) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  if (hospital.latitude === null || hospital.longitude === null) {
-    return NextResponse.json(
-      { error: "Add hospital coordinates before searching for donors." },
-      { status: 409 },
-    );
-  }
-  const { latitude, longitude } = hospital;
 
   const params = request.nextUrl.searchParams;
   const bloodGroup = bloodGroupSchema.safeParse(params.get("bloodGroup"));
@@ -30,10 +23,10 @@ export async function GET(request: NextRequest) {
   }
 
   const donors = await db.$transaction((tx) =>
-    findNearbyDonors(tx, {
+    findEligibleDonors(tx, {
       bloodGroup: bloodGroup.data,
-      latitude,
-      longitude,
+      latitude: hospital.latitude,
+      longitude: hospital.longitude,
       limit: 100,
       emergencyRequestId,
     }),
@@ -42,8 +35,8 @@ export async function GET(request: NextRequest) {
     donors: donors.map(({ id, name, distanceKm }) => ({
       id,
       name,
-      distanceKm: Math.round(distanceKm * 100) / 100,
+      distanceKm:
+        distanceKm === null ? null : Math.round(distanceKm * 100) / 100,
     })),
-    radiusKm: 5,
   });
 }

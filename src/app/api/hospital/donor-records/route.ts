@@ -13,6 +13,7 @@ const donorSchema = z.object({
   bloodGroup: bloodGroupSchema,
   callConsent: z.boolean(),
   trackingConsent: z.boolean(),
+  smsConsent: z.boolean(),
   latitude: z.number().finite().min(-90).max(90).nullable(),
   longitude: z.number().finite().min(-180).max(180).nullable(),
 }).superRefine((donor, context) => {
@@ -51,6 +52,7 @@ export async function GET() {
       available: true,
       callConsent: true,
       trackingConsent: true,
+      smsConsent: true,
       latitude: true,
       longitude: true,
       nextEligibleAt: true,
@@ -104,6 +106,7 @@ export async function POST(request: NextRequest) {
         available: true,
         callConsent: true,
         trackingConsent: true,
+        smsConsent: true,
         latitude: true,
         longitude: true,
         nextEligibleAt: true,

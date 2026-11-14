@@ -42,9 +42,6 @@ export async function GET() {
       where: {
         available: true,
         callConsent: true,
-        trackingConsent: true,
-        latitude: { not: null },
-        longitude: { not: null },
         OR: [
           { nextEligibleAt: null },
           { nextEligibleAt: { lte: new Date() } },

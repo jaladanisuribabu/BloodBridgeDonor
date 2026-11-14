@@ -54,6 +54,9 @@ type EmergencyRequest = {
   unitsConfirmed: number;
   state: string;
   createdAt: string;
+  smsSent: number;
+  smsFailed: number;
+  smsQueued: number;
   donors: Donor[];
 };
 type Forecast = {
@@ -96,9 +99,18 @@ type StaffDonor = {
   available: boolean;
   callConsent: boolean;
   trackingConsent: boolean;
+  smsConsent: boolean;
   hasLocation: boolean;
   nextEligibleAt: string | null;
   createdAt: string;
+};
+type TwilioReadiness = {
+  configured: boolean;
+  missingVariables: string[];
+};
+type TwilioConfiguration = {
+  voice: TwilioReadiness;
+  sms: TwilioReadiness;
 };
 type BloodUnitStatus =
   | "PENDING_TESTING"
@@ -196,6 +208,7 @@ export default function Dashboard() {
   const [donorBloodGroup, setDonorBloodGroup] = useState<BloodGroup>("O_POSITIVE");
   const [donorCallConsent, setDonorCallConsent] = useState(false);
   const [donorTrackingConsent, setDonorTrackingConsent] = useState(false);
+  const [donorSmsConsent, setDonorSmsConsent] = useState(false);
   const [donorLatitude, setDonorLatitude] = useState("");
   const [donorLongitude, setDonorLongitude] = useState("");
   const [donorLocationBusy, setDonorLocationBusy] = useState(false);
@@ -242,6 +255,10 @@ export default function Dashboard() {
   const [googleStatus, setGoogleStatus] = useState<
     "checking" | "ready" | "not_configured" | "unavailable"
   >("checking");
+  const [twilioConfiguration, setTwilioConfiguration] =
+    useState<TwilioConfiguration | null>(null);
+  const [twilioConfigurationError, setTwilioConfigurationError] = useState("");
+  const [retryingRequestId, setRetryingRequestId] = useState("");
   const [isLocalApp, setIsLocalApp] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState<"password" | "email" | null>(
     null,
@@ -287,6 +304,26 @@ export default function Dashboard() {
     setForecasts(inventoryData.forecasts);
     setInventoryChanges(inventoryData.changes);
     setDonorNetwork(membersData);
+  }, []);
+
+  const refreshTwilioConfiguration = useCallback(async () => {
+    setTwilioConfigurationError("");
+    try {
+      const response = await fetch("/api/hospital/ivr/status", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, "Could not check IVR configuration."),
+        );
+      }
+      const data = (await response.json()) as TwilioConfiguration;
+      setTwilioConfiguration(data);
+    } catch (error) {
+      setTwilioConfigurationError(
+        requestError(error, "Could not check IVR configuration."),
+      );
+    }
   }, []);
 
   const refreshStaffRecords = useCallback(async (section: DashboardSection) => {
@@ -445,6 +482,11 @@ export default function Dashboard() {
     return () => window.clearInterval(timer);
   }, [hospital, refresh]);
 
+  useEffect(() => {
+    if (!hospital || activeSection !== "emergency") return;
+    void refreshTwilioConfiguration();
+  }, [hospital, activeSection, refreshTwilioConfiguration]);
+
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -546,7 +588,7 @@ export default function Dashboard() {
       }
       setHospital(data.hospital);
       setHospitalCity(data.hospital.city ?? "");
-      setMessage("Hospital location saved. Donor matching is ready.");
+      setMessage("Hospital address and map settings saved. The address is used in IVR; the map pin is optional for ETA.");
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not save hospital location.");
@@ -618,17 +660,95 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bloodGroup, unitsRequired }),
       });
-      const data = (await response.json()) as { error?: string; warning?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        warning?: string;
+        startedCalls?: number;
+      };
       if (!response.ok) throw new Error(data.error ?? "Could not create request.");
       setMessage(
         data.warning ??
-          "Emergency request saved. Donor calls are being dispatched.",
+          `Emergency request saved. ${data.startedCalls ?? 0} donor call(s) started.`,
       );
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not create request.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function retryRequestDispatch(requestId: string) {
+    setRetryingRequestId(requestId);
+    setMessage("");
+    try {
+      const response = await fetch(
+        `/api/hospital/requests/${encodeURIComponent(requestId)}/dispatch`,
+        { method: "POST" },
+      );
+      const data = (await response.json()) as {
+        error?: string;
+        warning?: string;
+        startedCalls?: number;
+        smsWarning?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not retry donor dispatch.");
+      }
+      setMessage(
+        [data.warning, data.smsWarning].filter(Boolean).join(" ") ||
+          `${data.startedCalls ?? 0} additional donor call(s) started.`,
+      );
+      await refresh();
+    } catch (error) {
+      setMessage(requestError(error, "Could not retry donor dispatch."));
+    } finally {
+      setRetryingRequestId("");
+    }
+  }
+
+  async function updateDonorConsent(
+    donor: StaffDonor,
+    field: "callConsent" | "smsConsent",
+  ) {
+    const consent = !donor[field];
+    const description =
+      field === "callConsent"
+        ? "automated emergency calls"
+        : "emergency SMS alerts";
+    if (
+      consent &&
+      !window.confirm(`Confirm this donor explicitly opted in to ${description}.`)
+    ) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/hospital/donor-records/${encodeURIComponent(donor.id)}/consent`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: consent }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(
+          await responseError(response, "Could not update donor consent."),
+        );
+      }
+      setDonorRecords((records) =>
+        records.map((record) =>
+          record.id === donor.id ? { ...record, [field]: consent } : record,
+        ),
+      );
+      setMessage(
+        consent
+          ? `${field === "callConsent" ? "Call" : "SMS"} opt-in recorded.`
+          : `${field === "callConsent" ? "Call" : "SMS"} opt-in revoked.`,
+      );
+    } catch (error) {
+      setMessage(requestError(error, "Could not update donor consent."));
     }
   }
 
@@ -697,6 +817,7 @@ export default function Dashboard() {
           bloodGroup: donorBloodGroup,
           callConsent: donorCallConsent,
           trackingConsent: donorTrackingConsent,
+          smsConsent: donorSmsConsent,
           latitude: donorLatitude ? Number(donorLatitude) : null,
           longitude: donorLongitude ? Number(donorLongitude) : null,
         }),
@@ -718,11 +839,12 @@ export default function Dashboard() {
       setDonorLongitude("");
       setDonorCallConsent(false);
       setDonorTrackingConsent(false);
+      setDonorSmsConsent(false);
       setDonorActivationToken(data.activationToken ?? "");
       setDonorRecordMessage(
-        createdDonor.hasLocation && createdDonor.callConsent
-          ? "Donor record saved. The donor can be considered for emergency matching."
-          : "Donor record saved. It will not be eligible for proximity calls until the required consent and exact location are recorded.",
+        createdDonor.callConsent
+          ? "Donor record saved. Calls can match across any distance; location sharing is optional and used only for tracking and ETA."
+          : "Donor record saved. The donor will not be called until explicit call consent is recorded.",
       );
     } catch (error) {
       setDonorRecordError(true);
@@ -1277,11 +1399,11 @@ export default function Dashboard() {
         {message && <p className="notice">{message}</p>}
           <section className={`panel location-setup dashboard-view${activeSection === "settings" ? "" : " section-hidden"}`}>
             <div className="section-heading">
-              <div><p className="eyebrow">{hospitalLocation && hospital.address && hospital.city ? "MAP & ADDRESS" : "REQUIRED FOR MATCHING"}</p><h2>{hospitalLocation && hospital.address && hospital.city ? "Hospital location" : "Set your hospital location"}</h2></div>
+              <div><p className="eyebrow">{hospital.address && hospital.city ? "HOSPITAL ADDRESS" : "ADDRESS REQUIRED FOR CALLS"}</p><h2>{hospital.address && hospital.city ? "Hospital location" : "Set hospital address"}</h2></div>
             </div>
-            <p className="muted">
-              Enter the facility address and city. Use the location button at the hospital entrance or emergency department to pin the matching point on Google Maps.
-            </p>
+              <p className="muted">
+                Enter the facility address and city for the IVR message. The optional map pin is used for ETA calculations, not donor call matching.
+              </p>
             <form className="stack-form location-form" onSubmit={saveHospitalLocation}>
               <label>
                 Hospital address
@@ -1308,7 +1430,7 @@ export default function Dashboard() {
                 <span className="helper-text">
                   {hospitalLatitude && hospitalLongitude
                     ? "Map pin selected. Save to update matching and ETA calculations."
-                    : "Location is used only to match nearby donors and calculate ETA."}
+                    : "Hospital coordinates are optional and used only for ETA calculations."}
                 </span>
               </div>
               {locationError && <p className="notice error" role="alert">{locationError}</p>}
@@ -1361,7 +1483,7 @@ export default function Dashboard() {
           <div className="section-heading">
             <div><p className="eyebrow">STAFF-ONLY · DONOR INTAKE</p><h2>Donor records</h2></div>
           </div>
-          <p className="muted privacy-note">Add donors encountered at hospital visits or campaigns. Calls require explicit call consent, and the 5 km matching queue also requires explicit location consent and a donor-confirmed precise location. Donors without those prerequisites are stored but never called automatically.</p>
+          <p className="muted privacy-note">Add donors encountered at hospital visits or campaigns. Voice calls, SMS alerts, and location tracking each require separate explicit consent. Call matching works at any distance; location sharing is optional and is used only for tracking and ETA.</p>
           <form className="stack-form donor-intake-form" onSubmit={(event) => void createDonorRecord(event)}>
             <div className="location-coordinate-fields">
               <label>Donor name<input required minLength={2} maxLength={120} value={donorName} onChange={(event) => setDonorName(event.target.value)} /></label>
@@ -1384,7 +1506,11 @@ export default function Dashboard() {
                     setDonorLongitude("");
                   }
                 }} />
-                <span>Donor explicitly agreed to share location for emergency matching and tracking.</span>
+                <span>Donor explicitly agreed to share location for live tracking and ETA.</span>
+              </label>
+              <label className="consent-confirmation">
+                <input type="checkbox" checked={donorSmsConsent} onChange={(event) => setDonorSmsConsent(event.target.checked)} />
+                <span>Donor explicitly agreed to receive emergency SMS alerts.</span>
               </label>
             </div>
             <div className="donor-location-capture">
@@ -1394,7 +1520,7 @@ export default function Dashboard() {
               <span className="helper-text">
                 {donorLatitude && donorLongitude
                   ? `Location captured (${Number(donorLatitude).toFixed(4)}, ${Number(donorLongitude).toFixed(4)}).`
-                  : "Capture only while the donor is present and has agreed. An area name alone cannot qualify for 5 km calls."}
+                  : "Capture only while the donor is present and has agreed. GPS is not required for calls."}
               </span>
             </div>
             {donorLocationError && <p className="notice error" role="alert">{donorLocationError}</p>}
@@ -1418,9 +1544,26 @@ export default function Dashboard() {
                   <span className={donor.callConsent ? "consent-yes" : "consent-no"}>
                     Calls {donor.callConsent ? "consented" : "not consented"}
                   </span>
+                  <button
+                    type="button"
+                    className="button subtle small-button"
+                    onClick={() => void updateDonorConsent(donor, "callConsent")}
+                  >
+                    {donor.callConsent ? "Revoke call opt-in" : "Record call opt-in"}
+                  </button>
                   <span className={donor.trackingConsent && donor.hasLocation ? "consent-yes" : "consent-no"}>
                     {donor.trackingConsent && donor.hasLocation ? "Location ready" : "Location not ready"}
                   </span>
+                  <span className={donor.smsConsent ? "consent-yes" : "consent-no"}>
+                    SMS {donor.smsConsent ? "consented" : "not consented"}
+                  </span>
+                  <button
+                    type="button"
+                    className="button subtle small-button"
+                    onClick={() => void updateDonorConsent(donor, "smsConsent")}
+                  >
+                    {donor.smsConsent ? "Revoke SMS opt-in" : "Record SMS opt-in"}
+                  </button>
                   <span>{donor.available ? "Available" : "Unavailable"}{donor.nextEligibleAt ? ` · Review ${new Date(donor.nextEligibleAt).toLocaleDateString()}` : ""}</span>
                 </div>
               </article>
@@ -1477,21 +1620,44 @@ export default function Dashboard() {
                 />
               </label>
               <button
-                disabled={busy || !hospitalLocation || !hospital.address}
+                disabled={busy || !hospital.address}
                 className="button primary"
               >
-                {busy ? "Submitting..." : "Find nearby donors"}
+                {busy ? "Submitting..." : "Find eligible donors"}
               </button>
             </form>
-            <p className="helper-text">Eligible, consenting donors are called in groups of up to five within 5 km.</p>
+            <p className="helper-text">Available donors with call consent are matched nationwide and called in groups of up to five. GPS is optional and only used for live tracking after a donor accepts.</p>
           </article>
 
           <article className="panel dispatch-guide">
             <p className="eyebrow">AUTOMATED DISPATCH</p>
-            <h2>Smart donor call queue</h2>
-            <p className="muted">The system contacts eligible, consenting donors near your hospital and keeps the response queue moving.</p>
-            <div className="dispatch-rule"><span>01</span><div><strong>5 km radius</strong><small>Exact blood-group match near this hospital</small></div></div>
+            <h2>IVR and alert readiness</h2>
+            <p className="muted">Only available donors with explicit call consent are called. SMS is sent only to donors who separately opted in.</p>
+            <div className="dispatch-rule"><span>01</span><div><strong>Any distance</strong><small>Exact blood-group match; GPS is not required to call</small></div></div>
             <div className="dispatch-rule"><span>02</span><div><strong>Up to 5 calls at once</strong><small>Rollover continues until units are confirmed</small></div></div>
+            <div className="provider-readiness">
+              <div className="section-heading">
+                <strong>Twilio configuration</strong>
+                <button type="button" className="button subtle small-button" onClick={() => void refreshTwilioConfiguration()}>
+                  Refresh status
+                </button>
+              </div>
+              {twilioConfigurationError && <p className="notice error">{twilioConfigurationError}</p>}
+              {!twilioConfiguration && !twilioConfigurationError && <p className="helper-text">Checking server configuration…</p>}
+              {twilioConfiguration && (
+                <>
+                  <p className={`notice${twilioConfiguration.voice.configured ? "" : " error"}`}>
+                    Voice IVR configuration {twilioConfiguration.voice.configured ? "present" : "incomplete"}
+                    {!twilioConfiguration.voice.configured && ` · Missing: ${twilioConfiguration.voice.missingVariables.join(", ")}`}
+                  </p>
+                  <p className={`notice${twilioConfiguration.sms.configured ? "" : " error"}`}>
+                    SMS configuration {twilioConfiguration.sms.configured ? "present" : "incomplete"}
+                    {!twilioConfiguration.sms.configured && ` · Missing: ${twilioConfiguration.sms.missingVariables.join(", ")}`}
+                  </p>
+                  <p className="fine-print">This checks required settings only; it cannot verify your Twilio account, number capabilities, or trial limits. Set secrets server-side in Vercel → Project → Settings → Environment Variables, then redeploy. Never paste Twilio secrets into the browser or chat.</p>
+                </>
+              )}
+            </div>
             <a href="#requests" className="text-link">View recent requests <span>→</span></a>
           </article>
         </section>
@@ -1811,7 +1977,7 @@ export default function Dashboard() {
               <p>Actual donor records in the shared network. Fictional preview profiles are not included.</p>
               <div className="member-callable">
                 <span className="sidebar-status-dot" />
-                <strong>{donorNetwork?.callable ?? "—"} consented and location-enabled</strong>
+                <strong>{donorNetwork?.callable ?? "—"} available and call-consented</strong>
               </div>
               <div className="blood-group-summary">
                 {(donorNetwork?.groups ?? []).map((group) => (
@@ -1846,7 +2012,7 @@ export default function Dashboard() {
                     checked={donorImportConsent}
                     onChange={(event) => setDonorImportConsent(event.target.checked)}
                   />
-                  <span>I confirm every donor in this file has explicitly agreed to be contacted and share the listed location for emergency matching.</span>
+                  <span>I confirm every donor in this file explicitly agreed to emergency calls and sharing the listed location. SMS consent is recorded separately.</span>
                 </label>
                 {donorImportMessage && (
                   <p className={`notice${donorImportError ? " error" : ""}`} role="status">{donorImportMessage}</p>
@@ -1905,9 +2071,24 @@ export default function Dashboard() {
                   <div className="blood-badge">{formatGroup(request.bloodGroup)}</div>
                   <div className="request-info">
                     <strong>{request.unitsConfirmed} / {request.unitsRequired} units confirmed</strong>
-                    <span>{new Date(request.createdAt).toLocaleString()} · {request.donors.length} donors contacted</span>
+                    <span>
+                      {new Date(request.createdAt).toLocaleString()} · {request.donors.length} call attempts
+                      {request.smsSent > 0 && ` · ${request.smsSent} SMS sent`}
+                      {request.smsFailed > 0 && ` · ${request.smsFailed} SMS failed`}
+                      {request.smsQueued > 0 && ` · ${request.smsQueued} SMS queued`}
+                    </span>
                   </div>
                   <span className={`status-pill ${request.state.toLowerCase()}`}>{request.state}</span>
+                  {request.state === "OPEN" && (
+                    <button
+                      type="button"
+                      className="button subtle small-button"
+                      disabled={Boolean(retryingRequestId)}
+                      onClick={() => void retryRequestDispatch(request.id)}
+                    >
+                      {retryingRequestId === request.id ? "Retrying…" : "Retry dispatch"}
+                    </button>
+                  )}
                   <div className="call-states">
                     {request.donors.map((donor) => (
                       <span key={donor.id} title={donor.name}>{donor.name}: {formatStatus(donor.status)}</span>

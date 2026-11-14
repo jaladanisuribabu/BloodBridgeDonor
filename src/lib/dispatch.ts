@@ -3,8 +3,12 @@ import {
   RequestState,
 } from "@prisma/client";
 import { db } from "@/lib/db";
-import { appUrl, getTwilioClient } from "@/lib/twilio";
-import { findNearbyDonors } from "@/lib/proximity";
+import {
+  appUrl,
+  getTwilioClient,
+  getTwilioConfigurationStatus,
+} from "@/lib/twilio";
+import { findEligibleDonors } from "@/lib/proximity";
 
 const MAX_SIMULTANEOUS_CALLS = 5;
 const ACTIVE_CALL_STATUSES: CallLogStatus[] = [
@@ -29,9 +33,7 @@ async function reserveNextBatch(requestId: string): Promise<ReservedCall[]> {
 
     if (
       !request ||
-      request.state !== RequestState.OPEN ||
-      request.hospital.latitude === null ||
-      request.hospital.longitude === null
+      request.state !== RequestState.OPEN
     ) return [];
 
     const activeCount = await tx.callLog.count({
@@ -40,13 +42,11 @@ async function reserveNextBatch(requestId: string): Promise<ReservedCall[]> {
     const slots = MAX_SIMULTANEOUS_CALLS - activeCount;
     if (slots <= 0 || request.unitsConfirmed >= request.unitsRequired) return [];
 
-    const remainingUnits = request.unitsRequired - request.unitsConfirmed;
-    const take = Math.min(slots, remainingUnits);
-    const donors = await findNearbyDonors(tx, {
+    const donors = await findEligibleDonors(tx, {
       bloodGroup: request.bloodGroup,
       latitude: request.hospital.latitude,
       longitude: request.hospital.longitude,
-      limit: take,
+      limit: slots,
       emergencyRequestId: requestId,
     });
 
@@ -72,6 +72,12 @@ async function reserveNextBatch(requestId: string): Promise<ReservedCall[]> {
 export async function dispatchRequest(
   requestId: string,
 ): Promise<{ startedCalls: number; failedCalls: number }> {
+  const voiceStatus = getTwilioConfigurationStatus().voice;
+  if (!voiceStatus.configured) {
+    throw new Error(
+      `Twilio voice is not configured. Missing: ${voiceStatus.missingVariables.join(", ")}.`,
+    );
+  }
   const from = process.env.TWILIO_PHONE_NUMBER;
   if (!from) throw new Error("TWILIO_PHONE_NUMBER is not configured.");
   const client = getTwilioClient();
@@ -87,8 +93,7 @@ export async function dispatchRequest(
       return { startedCalls, failedCalls };
     }
 
-    let startedAtLeastOne = false;
-    for (const call of queuedCalls) {
+    const outcomes = await Promise.all(queuedCalls.map(async (call) => {
       try {
         const stillQueued = await db.callLog.findFirst({
           where: {
@@ -98,7 +103,7 @@ export async function dispatchRequest(
           },
           select: { id: true },
         });
-        if (!stillQueued) continue;
+        if (!stillQueued) return { started: false, failed: false };
 
         const created = await client.calls.create({
           to: call.donor.phone,
@@ -129,22 +134,25 @@ export async function dispatchRequest(
             current.status === CallLogStatus.CANCELLED
           ) {
             await client.calls(created.sid).update({ status: "completed" });
-            continue;
+            return { started: false, failed: false };
           }
         }
-        startedCalls += 1;
-        startedAtLeastOne = true;
+        return { started: true, failed: false };
       } catch (error) {
-        failedCalls += 1;
         await db.callLog.updateMany({
           where: { id: call.id, status: CallLogStatus.QUEUED },
           data: { status: CallLogStatus.FAILED },
         });
         console.error(`Unable to start donor call ${call.id}:`, error);
+        return { started: false, failed: true };
       }
-    }
+    }));
+    startedCalls += outcomes.filter((outcome) => outcome.started).length;
+    failedCalls += outcomes.filter((outcome) => outcome.failed).length;
 
-    if (startedAtLeastOne) return { startedCalls, failedCalls };
+    if (outcomes.some((outcome) => outcome.started)) {
+      return { startedCalls, failedCalls };
+    }
   }
 }
 
@@ -261,6 +269,38 @@ export async function cancelOutstandingCalls(requestId: string): Promise<void> {
           await client.calls(call.twilioCallSid!).update({ status: "completed" });
         } catch (error) {
           console.error(`Unable to terminate Twilio call ${call.id}:`, error);
+        }
+      }),
+  );
+}
+
+export async function cancelDonorCalls(donorId: string): Promise<void> {
+  const where = {
+    donorId,
+    status: { in: ACTIVE_CALL_STATUSES },
+    emergencyRequest: { is: { state: RequestState.OPEN } },
+  };
+  const outstanding = await db.callLog.findMany({
+    where,
+    select: { id: true, twilioCallSid: true },
+  });
+  if (!outstanding.length) return;
+
+  await db.callLog.updateMany({
+    where,
+    data: { status: CallLogStatus.CANCELLED },
+  });
+
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) return;
+  const client = getTwilioClient();
+  await Promise.all(
+    outstanding
+      .filter((call) => call.twilioCallSid)
+      .map(async (call) => {
+        try {
+          await client.calls(call.twilioCallSid!).update({ status: "completed" });
+        } catch (error) {
+          console.error(`Unable to cancel donor call ${call.id}:`, error);
         }
       }),
   );
