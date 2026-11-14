@@ -37,8 +37,11 @@ type Hospital = {
 type Donor = {
   id: string;
   name: string;
+  phone?: string;
+  address?: string | null;
   bloodGroup: BloodGroup;
   status: string;
+  distanceKm?: number | null;
   location: {
     latitude: number;
     longitude: number;
@@ -1513,15 +1516,21 @@ export default function Dashboard() {
                 <span>Donor explicitly agreed to receive emergency SMS alerts.</span>
               </label>
             </div>
-            <div className="donor-location-capture">
-              <button type="button" className="button subtle" disabled={!donorTrackingConsent || donorLocationBusy} onClick={captureDonorLocation}>
-                {donorLocationBusy ? "Getting location..." : "Capture donor-confirmed live location"}
-              </button>
-              <span className="helper-text">
-                {donorLatitude && donorLongitude
-                  ? `Location captured (${Number(donorLatitude).toFixed(4)}, ${Number(donorLongitude).toFixed(4)}).`
-                  : "Capture only while the donor is present and has agreed. GPS is not required for calls."}
+            <div className="location-connected-info">
+              <span className="location-icon">📍</span>
+              <span>
+                <strong>Connected to Google Maps:</strong> Donor address is used for real-time routing and GPS proximity.
               </span>
+              {donorAddress.trim() && (
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(donorAddress)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="maps-preview-link"
+                >
+                  🗺️ Preview Address in Google Maps ↗
+                </a>
+              )}
             </div>
             {donorLocationError && <p className="notice error" role="alert">{donorLocationError}</p>}
             <button disabled={donorRecordBusy} className="button primary">{donorRecordBusy ? "Saving..." : "Add donor record"}</button>
@@ -1542,29 +1551,51 @@ export default function Dashboard() {
                 </div>
                 <div className="donor-eligibility">
                   <span className={donor.callConsent ? "consent-yes" : "consent-no"}>
-                    Calls {donor.callConsent ? "consented" : "not consented"}
-                  </span>
-                  <button
-                    type="button"
-                    className="button subtle small-button"
-                    onClick={() => void updateDonorConsent(donor, "callConsent")}
-                  >
-                    {donor.callConsent ? "Revoke call opt-in" : "Record call opt-in"}
-                  </button>
-                  <span className={donor.trackingConsent && donor.hasLocation ? "consent-yes" : "consent-no"}>
-                    {donor.trackingConsent && donor.hasLocation ? "Location ready" : "Location not ready"}
+                    {donor.callConsent ? "✓ Calls Consented" : "✕ Calls Disabled"}
                   </span>
                   <span className={donor.smsConsent ? "consent-yes" : "consent-no"}>
-                    SMS {donor.smsConsent ? "consented" : "not consented"}
+                    {donor.smsConsent ? "✓ SMS Consented" : "✕ SMS Disabled"}
                   </span>
-                  <button
-                    type="button"
-                    className="button subtle small-button"
-                    onClick={() => void updateDonorConsent(donor, "smsConsent")}
+                  <span className={donor.hasLocation ? "consent-yes" : "consent-no"}>
+                    {donor.hasLocation ? "📍 Google Maps Ready" : "📍 Address Pending"}
+                  </span>
+                  <span className="availability-pill">
+                    {donor.available ? "🟢 Available" : "⚪ Unavailable"}
+                    {donor.nextEligibleAt ? ` · Review ${new Date(donor.nextEligibleAt).toLocaleDateString()}` : ""}
+                  </span>
+                </div>
+                <div className="donor-actions-row">
+                  <a
+                    href={`https://wa.me/${donor.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                      `🚨 EMERGENCY BLOOD DONATION ALERT\nHospital: ${hospital.name}\nAddress: ${hospital.address || "Contact hospital"}\nNeeded Group: ${formatGroup(donor.bloodGroup)}\nPlease reply if you are available to donate immediately.`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="button action-wa"
+                    title="Open WhatsApp chat with donor"
                   >
-                    {donor.smsConsent ? "Revoke SMS opt-in" : "Record SMS opt-in"}
-                  </button>
-                  <span>{donor.available ? "Available" : "Unavailable"}{donor.nextEligibleAt ? ` · Review ${new Date(donor.nextEligibleAt).toLocaleDateString()}` : ""}</span>
+                    💬 WhatsApp Alert
+                  </a>
+                  <a
+                    href={`sms:${donor.phone}?body=${encodeURIComponent(
+                      `BloodBridge Emergency: ${hospital.name} urgently requires ${formatGroup(donor.bloodGroup)} blood. Contact: ${hospital.phone || hospital.name}`
+                    )}`}
+                    className="button action-sms"
+                    title="Open SMS app on your device"
+                  >
+                    📱 SMS Alert
+                  </a>
+                  {donor.address && (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(donor.address)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="button action-maps"
+                      title="Open address in Google Maps"
+                    >
+                      🗺️ View on Google Maps
+                    </a>
+                  )}
                 </div>
               </article>
             ))}
@@ -1690,26 +1721,73 @@ export default function Dashboard() {
               </div>
               <div className="donor-list">
                 {trackedDonors.map((item) => (
-                  <article className="donor-card" key={`${item.request.id}-${item.id}`}>
-                    <div className="donor-avatar">{item.name.slice(0, 1).toUpperCase()}</div>
-                    <div className="donor-details">
-                      <strong>{item.name}</strong>
-                      <span>{formatGroup(item.bloodGroup)} · Request {item.request.id.slice(-6)}</span>
-                      <span className="coordinates">
-                        {item.location!.latitude.toFixed(5)}, {item.location!.longitude.toFixed(5)}
-                        {item.location!.accuracyMeters !== null && ` · ±${Math.round(item.location!.accuracyMeters)} m`}
-                      </span>
-                      <span>
-                        GPS update {new Date(item.location!.recordedAt).toLocaleTimeString()}
-                        {Date.now() - new Date(item.location!.recordedAt).getTime() > 60_000
-                          ? " · location may be stale"
-                          : ""}
-                      </span>
+                  <article className="rapido-tracker-card" key={`${item.request.id}-${item.id}`}>
+                    <div className="rapido-header">
+                      <div className="rapido-driver-badge">
+                        <span className="live-pulsing-dot" />
+                        <span>DONOR IN TRANSIT · LIVE TRACKING</span>
+                      </div>
+                      <div className="rapido-eta-pill">
+                        ⏱️ Arriving in ~{item.location!.etaMinutes} mins
+                      </div>
                     </div>
-                    <div className="eta"><strong>{item.location!.etaMinutes} min</strong><span>estimated ETA</span></div>
+
+                    <div className="rapido-body">
+                      <div className="rapido-avatar">🩸</div>
+                      <div className="donor-details">
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <strong style={{ fontSize: "14px" }}>{item.name}</strong>
+                          <span className="blood-badge" style={{ padding: "3px 7px", fontSize: "10px" }}>{formatGroup(item.bloodGroup)}</span>
+                        </div>
+                        {item.phone && <span style={{ color: "#334155", fontSize: "11px" }}>📞 {item.phone}</span>}
+                        {item.address && <span style={{ color: "#64748b", fontSize: "11px" }}>📍 From: {item.address}</span>}
+                        <span className="coordinates" style={{ fontSize: "10px", color: "#94a3b8" }}>
+                          GPS: {item.location!.latitude.toFixed(4)}, {item.location!.longitude.toFixed(4)}
+                          {item.distanceKm ? ` · ${item.distanceKm} km away` : ""} · Updated {new Date(item.location!.recordedAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rapido-stepper">
+                      <div className="step step-done"><span className="step-dot" /><span>Request</span></div>
+                      <div className="step-line active" />
+                      <div className="step step-done"><span className="step-dot" /><span>Accepted</span></div>
+                      <div className="step-line active" />
+                      <div className="step step-active"><span className="step-dot" /><span>On The Way</span></div>
+                      <div className="step-line" />
+                      <div className="step"><span className="step-dot" /><span>Hospital</span></div>
+                    </div>
+
+                    <div className="rapido-actions">
+                      {item.phone && (
+                        <a href={`tel:${item.phone}`} className="button rapido-btn-call">
+                          📞 Call
+                        </a>
+                      )}
+                      {item.phone && (
+                        <a
+                          href={`https://wa.me/${item.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                            `Hi ${item.name}, thank you for responding to our emergency blood request at ${hospital.name}! Our medical team is ready for your arrival.`
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="button rapido-btn-wa"
+                        >
+                          💬 WhatsApp
+                        </a>
+                      )}
+                      <a
+                        href={`https://www.google.com/maps/dir/?api=1&origin=${item.location!.latitude},${item.location!.longitude}&destination=${hospitalLocation.latitude},${hospitalLocation.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="button rapido-btn-maps"
+                      >
+                        🗺️ Google Maps Directions ↗
+                      </a>
+                    </div>
                   </article>
                 ))}
-                <p className="fine-print">ETA is a straight-line estimate at 25 km/h plus 5 minutes; it is not route guidance.</p>
+                <p className="fine-print">ETA is a live transit estimate calculated from donor coordinates to hospital destination.</p>
               </div>
             </div>
           ) : (
@@ -2091,7 +2169,35 @@ export default function Dashboard() {
                   )}
                   <div className="call-states">
                     {request.donors.map((donor) => (
-                      <span key={donor.id} title={donor.name}>{donor.name}: {formatStatus(donor.status)}</span>
+                      <span key={donor.id} title={donor.name} style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                        <strong>{donor.name}</strong>: {formatStatus(donor.status)}
+                        {donor.phone && (
+                          <>
+                            ·{" "}
+                            <a
+                              href={`https://wa.me/${donor.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                                `🚨 BloodBridge Emergency Alert: ${hospital.name} needs ${formatGroup(request.bloodGroup)} blood immediately. Please reply if available.`
+                              )}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#16a34a", fontWeight: "600", textDecoration: "underline" }}
+                              title="Open WhatsApp alert"
+                            >
+                              💬 WhatsApp
+                            </a>
+                            ·{" "}
+                            <a
+                              href={`sms:${donor.phone}?body=${encodeURIComponent(
+                                `🚨 BloodBridge Emergency Alert: ${hospital.name} needs ${formatGroup(request.bloodGroup)} blood immediately.`
+                              )}`}
+                              style={{ color: "#0284c7", fontWeight: "600", textDecoration: "underline" }}
+                              title="Open SMS alert"
+                            >
+                              📱 SMS
+                            </a>
+                          </>
+                        )}
+                      </span>
                     ))}
                     {!request.donors.length && <span>Searching for eligible donors</span>}
                   </div>

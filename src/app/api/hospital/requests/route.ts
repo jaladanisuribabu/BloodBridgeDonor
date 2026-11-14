@@ -19,7 +19,7 @@ export async function GET() {
         orderBy: { updatedAt: "desc" },
         include: {
           donor: {
-            select: { id: true, name: true, bloodGroup: true },
+            select: { id: true, name: true, phone: true, address: true, bloodGroup: true },
           },
           locationTracking: {
             orderBy: { recordedAt: "desc" },
@@ -61,8 +61,11 @@ export async function GET() {
         return {
           id: call.donor.id,
           name: call.donor.name,
+          phone: call.donor.phone,
+          address: call.donor.address,
           bloodGroup: call.donor.bloodGroup,
           status: call.status,
+          distanceKm: distanceKm !== null ? Number(distanceKm.toFixed(1)) : null,
           location: location
             ? {
                 latitude: location.latitude,
