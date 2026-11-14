@@ -281,6 +281,12 @@ export default function Dashboard() {
   const [donorImportError, setDonorImportError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [activeDispatchAlerts, setActiveDispatchAlerts] = useState<{
+    requestId: string;
+    bloodGroup: BloodGroup;
+    unitsRequired: number;
+    donors: { id: string; name: string; phone: string; bloodGroup: BloodGroup; address: string | null }[];
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     const [requestResponse, inventoryResponse, membersResponse] = await Promise.all([
@@ -664,14 +670,40 @@ export default function Dashboard() {
         body: JSON.stringify({ bloodGroup, unitsRequired }),
       });
       const data = (await response.json()) as {
+        id?: string;
         error?: string;
         warning?: string;
         startedCalls?: number;
+        matchedDonors?: { id: string; name: string; phone: string; bloodGroup: BloodGroup; address: string | null }[];
       };
       if (!response.ok) throw new Error(data.error ?? "Could not create request.");
+
+      if (data.matchedDonors && data.matchedDonors.length > 0) {
+        setActiveDispatchAlerts({
+          requestId: data.id ?? "",
+          bloodGroup,
+          unitsRequired,
+          donors: data.matchedDonors,
+        });
+
+        const primaryDonor = data.matchedDonors[0];
+        const cleanPhone = primaryDonor.phone.replace(/[^0-9]/g, "");
+        const hospitalName = hospital?.name ?? "Hospital";
+        const hospitalAddress = hospital?.address ?? "Contact hospital";
+        const alertMsg = `🚨 EMERGENCY BLOOD DONATION ALERT\nHospital: ${hospitalName}\nAddress: ${hospitalAddress}\nNeeded Blood Group: ${formatGroup(bloodGroup)}\nUnits Needed: ${unitsRequired}\nAre you available to donate immediately? Please reply to confirm.`;
+        try {
+          window.open(
+            `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(alertMsg)}`,
+            "_blank",
+          );
+        } catch {
+          // popup blocked
+        }
+      }
+
       setMessage(
         data.warning ??
-          `Emergency request saved. ${data.startedCalls ?? 0} donor call(s) started.`,
+          `Emergency request saved. ${data.startedCalls ?? 0} donor call(s) and mobile message alerts dispatched.`,
       );
       await refresh();
     } catch (error) {
@@ -1628,6 +1660,58 @@ export default function Dashboard() {
               <div><p className="eyebrow">NEW MATCH</p><h2>Request blood units</h2></div>
               <span className="icon-bubble">+</span>
             </div>
+            {activeDispatchAlerts && (
+              <div className="active-dispatch-banner">
+                <div className="dispatch-banner-header">
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className="live-pulsing-dot" />
+                    <strong>⚡ AUTOMATED EMERGENCY ALERTS DISPATCHED ({activeDispatchAlerts.donors.length} MATCHES)</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="button subtle small-button"
+                    onClick={() => setActiveDispatchAlerts(null)}
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                <p style={{ margin: "6px 0 10px", fontSize: "12px", color: "#166534" }}>
+                  WhatsApp alert window was triggered automatically. You can also click below to message each donor directly on WhatsApp or your device SMS app:
+                </p>
+                <div className="dispatch-donor-cards">
+                  {activeDispatchAlerts.donors.map((donor) => {
+                    const cleanPhone = donor.phone.replace(/[^0-9]/g, "");
+                    const alertMsg = `🚨 EMERGENCY BLOOD DONATION ALERT\nHospital: ${hospital.name}\nAddress: ${hospital.address || "Contact hospital"}\nNeeded Blood Group: ${formatGroup(activeDispatchAlerts.bloodGroup)}\nUnits Needed: ${activeDispatchAlerts.unitsRequired}\nAre you available to donate immediately? Please reply to confirm.`;
+                    return (
+                      <div key={donor.id} className="dispatch-donor-card">
+                        <div>
+                          <strong>{donor.name}</strong> · <span style={{ color: "#334155" }}>{donor.phone}</span>
+                          <div style={{ fontSize: "11px", color: "#64748b" }}>{donor.address || "Hyderabad"}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                          <a
+                            href={`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(alertMsg)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="button action-wa"
+                            style={{ padding: "6px 12px", fontSize: "12px" }}
+                          >
+                            📲 Send WhatsApp Alert
+                          </a>
+                          <a
+                            href={`sms:${donor.phone}?body=${encodeURIComponent(alertMsg)}`}
+                            className="button action-sms"
+                            style={{ padding: "6px 12px", fontSize: "12px" }}
+                          >
+                            💬 Send SMS
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <form onSubmit={createRequest} className="request-form">
               <label>
                 Blood group

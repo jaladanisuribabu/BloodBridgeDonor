@@ -152,10 +152,24 @@ export async function POST(request: NextRequest) {
     warnings.push("SMS alerts could not be completed. Review provider logs.");
   }
 
+  const contactedDonors = await db.callLog.findMany({
+    where: { emergencyRequestId: created.id },
+    include: {
+      donor: { select: { id: true, name: true, phone: true, bloodGroup: true, address: true } },
+    },
+  });
+
   return NextResponse.json(
     {
       id: created.id,
       startedCalls,
+      matchedDonors: contactedDonors.map((c) => ({
+        id: c.donor.id,
+        name: c.donor.name,
+        phone: c.donor.phone,
+        bloodGroup: c.donor.bloodGroup,
+        address: c.donor.address,
+      })),
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     },
     { status: 201 },

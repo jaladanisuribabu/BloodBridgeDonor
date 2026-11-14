@@ -620,3 +620,37 @@ label { color: #303e44; }
 .rapido-btn-wa { background: #16a34a !important; color: white !important; }
 .rapido-btn-maps { background: #ea580c !important; color: white !important; }
 
+/* --- Live Emergency Alert Dispatch Banner --- */
+.active-dispatch-banner {
+  background: #f0fdf4;
+  border: 1.5px solid #86efac;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 16px rgba(22, 163, 74, 0.08);
+}
+.dispatch-banner-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #15803d;
+  font-size: 13px;
+  font-weight: 700;
+}
+.dispatch-donor-cards {
+  display: grid;
+  gap: 10px;
+}
+.dispatch-donor-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #dcfce7;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+
