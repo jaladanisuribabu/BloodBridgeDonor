@@ -73,11 +73,66 @@ export async function dispatchRequest(
   requestId: string,
 ): Promise<{ startedCalls: number; failedCalls: number }> {
   const voiceStatus = getTwilioConfigurationStatus().voice;
-  if (!voiceStatus.configured) {
+  const isDemo = !voiceStatus.configured && process.env.DEMO_DISPATCH !== "false";
+
+  if (!voiceStatus.configured && !isDemo) {
     throw new Error(
       `Twilio voice is not configured. Missing: ${voiceStatus.missingVariables.join(", ")}.`,
     );
   }
+
+  if (isDemo) {
+    const queuedCalls = await reserveNextBatch(requestId);
+    if (queuedCalls.length === 0) return { startedCalls: 0, failedCalls: 0 };
+
+    for (const call of queuedCalls) {
+      const callData = await db.callLog.findUnique({
+        where: { id: call.id },
+        include: {
+          donor: true,
+          emergencyRequest: {
+            include: { hospital: true },
+          },
+        },
+      });
+      if (!callData) continue;
+
+      await db.callLog.update({
+        where: { id: call.id },
+        data: {
+          status: CallLogStatus.ACCEPTED,
+          twilioCallSid: `demo-call-${call.id}`,
+          responseDigit: "1",
+        },
+      });
+
+      await db.emergencyRequest.update({
+        where: { id: requestId },
+        data: {
+          unitsConfirmed: {
+            increment: 1,
+          },
+        },
+      });
+
+      const baseLat = callData.donor.latitude ?? callData.emergencyRequest.hospital.latitude ?? 17.4905;
+      const baseLng = callData.donor.longitude ?? callData.emergencyRequest.hospital.longitude ?? 78.4003;
+
+      await db.locationTracking.create({
+        data: {
+          emergencyRequestId: requestId,
+          callLogId: call.id,
+          donorId: callData.donor.id,
+          latitude: baseLat + 0.002,
+          longitude: baseLng + 0.002,
+          accuracyMeters: 10,
+        },
+      });
+    }
+
+    return { startedCalls: queuedCalls.length, failedCalls: 0 };
+  }
+
   const from = process.env.TWILIO_PHONE_NUMBER;
   if (!from) throw new Error("TWILIO_PHONE_NUMBER is not configured.");
   const client = getTwilioClient();

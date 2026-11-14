@@ -37,15 +37,35 @@ export async function sendEmergencySmsAlerts(
     select: { id: true, phone: true },
   });
   const smsStatus = getTwilioConfigurationStatus().sms;
+  const isDemo = !smsStatus.configured && process.env.DEMO_DISPATCH !== "false";
   const outcome: EmergencySmsOutcome = {
     eligible: donors.length,
     sent: 0,
     failed: 0,
     skipped: 0,
-    missingVariables: smsStatus.missingVariables,
+    missingVariables: isDemo ? [] : smsStatus.missingVariables,
   };
-  if (!smsStatus.configured) {
+  if (!smsStatus.configured && !isDemo) {
     outcome.skipped = donors.length;
+    return outcome;
+  }
+
+  if (isDemo) {
+    for (const donor of donors) {
+      try {
+        await db.emergencySmsLog.create({
+          data: {
+            emergencyRequestId,
+            donorId: donor.id,
+            status: EmergencySmsStatus.SENT,
+            messageSid: `demo-sms-${donor.id}-${Date.now()}`,
+          },
+        });
+      } catch {
+        // ignore duplicate log
+      }
+    }
+    outcome.sent = donors.length;
     return outcome;
   }
 
